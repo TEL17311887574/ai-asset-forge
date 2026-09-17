@@ -2773,17 +2773,20 @@ body.cursor-active .cursor-ring {
 }
 
 .attach-button {
-  background: #263328;
+  background: #1f2620;
+  border: 1px solid #3a443b;
   border-radius: 50%;
   color: var(--accent);
   height: 40px;
-  transition: background 240ms var(--ease-out), transform 240ms var(--ease-out);
+  transition: background 220ms var(--ease-out), border-color 220ms var(--ease-out),
+    color 220ms var(--ease-out), transform 220ms var(--ease-out);
   width: 40px;
 }
 
 .attach-button:hover {
-  background: #344638;
-  transform: rotate(90deg);
+  background: #2c3a2f;
+  border-color: var(--accent);
+  transform: translateY(-1px);
 }
 
 .prompt-input-wrap .prompt-editor {
