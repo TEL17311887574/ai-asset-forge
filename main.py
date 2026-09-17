@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
+from auth.session import close_openai_clients
 from config_default import CORS_ORIGINS
 from image.service import get_error_message
 from router import router
@@ -99,6 +100,12 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+
+@app.on_event("shutdown")
+async def _shutdown() -> None:
+    """服务关闭时释放 OpenAI 客户端连接池。"""
+    await close_openai_clients()
 
 
 if __name__ == "__main__":

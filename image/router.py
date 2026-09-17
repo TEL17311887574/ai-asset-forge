@@ -59,7 +59,7 @@ async def generate(request: Request, payload: GenerateRequest):
         quality = safe_quality(payload.quality)
         count = safe_count(payload.n)
 
-        images = generate_image(
+        images = await generate_image(
             client=client,
             prompt=prompt,
             size=size,
@@ -101,7 +101,7 @@ async def edit(
         )
 
         mask_data = await mask.read() if mask else None
-        images_result = edit_image(
+        images_result = await edit_image(
             client=client,
             prompt=final_prompt,
             images=image_data,

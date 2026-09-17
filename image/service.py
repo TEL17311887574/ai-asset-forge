@@ -1,20 +1,40 @@
 """图片生成与编辑服务。"""
 
+import asyncio
 import io
 import re
 from typing import BinaryIO, Dict, List, Optional, Union
 
 from fastapi import HTTPException, UploadFile
-from openai import APIError, OpenAI
+from openai import APIError, AsyncOpenAI
 
 from config_default import (
     AVAILABLE_MODELS,
+    MAX_CONCURRENT_GENERATIONS,
     MAX_FILE_BYTES,
     MAX_PROMPT_LENGTH,
     MAX_SOURCE_FILES,
     MODEL,
     PROMPTS_DIR,
 )
+
+
+# 并发闸门：图片生成耗时长，同时放太多请求容易被上游限流，
+# 超出的请求在这里排队等待而不是直接失败。
+#
+# 注意：asyncio.Semaphore 会绑定「创建它时」的事件循环，而本模块在 uvicorn
+# 启动事件循环之前就被导入了，模块级直接创建会导致运行时出现
+# "got Future attached to a different loop"。因此延迟到首次使用时创建，
+# 保证信号量一定绑定在真正处理请求的那个循环上。
+_GENERATION_SEMAPHORE: Optional[asyncio.Semaphore] = None
+
+
+def _get_generation_semaphore() -> asyncio.Semaphore:
+    """获取（或惰性创建）并发生成信号量，必须在事件循环内调用。"""
+    global _GENERATION_SEMAPHORE
+    if _GENERATION_SEMAPHORE is None:
+        _GENERATION_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_GENERATIONS)
+    return _GENERATION_SEMAPHORE
 
 
 def clean_prompt(text: str) -> str:
@@ -138,28 +158,33 @@ async def read_image_files(files: List[UploadFile]) -> List[bytes]:
     return images
 
 
-def generate_image(
-    client: OpenAI,
+async def generate_image(
+    client: AsyncOpenAI,
     prompt: str,
     size: str,
     quality: str,
     n: int,
     model: Optional[str] = None,
-) -> str:
-    """调用 OpenAI API 生成图片，返回 Base64。"""
-    response = client.images.generate(
-        model=safe_model(model),
-        prompt=prompt,
-        size=size,
-        quality=quality,
-        n=n,
-        response_format="b64_json",
-    )
-    return _image_response(response)
+) -> List[Dict[str, str]]:
+    """调用 OpenAI API 生成图片，返回 data URL 列表。
+
+    通过全局信号量限制同时在跑的生成任务数；``await`` 期间事件循环可以去
+    处理其它请求，这是并发能力的关键。
+    """
+    async with _get_generation_semaphore():
+        response = await client.images.generate(
+            model=safe_model(model),
+            prompt=prompt,
+            size=size,
+            quality=quality,
+            n=n,
+            response_format="b64_json",
+        )
+        return _image_response(response)
 
 
-def edit_image(
-    client: OpenAI,
+async def edit_image(
+    client: AsyncOpenAI,
     prompt: str,
     images: List[bytes],
     size: str,
@@ -168,8 +193,12 @@ def edit_image(
     n: int,
     mask: Optional[bytes] = None,
     model: Optional[str] = None,
-) -> str:
-    """调用 OpenAI API 编辑图片，返回 Base64。"""
+) -> List[Dict[str, str]]:
+    """调用 OpenAI API 编辑图片，返回 data URL 列表。
+
+    与 ``generate_image`` 共用同一个并发闸门，避免文生图与图生图
+    同时把上游打满。
+    """
     image_parts = [
         to_openai_file(data, f"image-{index + 1}.png")
         for index, data in enumerate(images)
@@ -190,8 +219,9 @@ def edit_image(
     if mask:
         payload["mask"] = to_openai_file(mask, "mask.png")
 
-    response = client.images.edit(**payload)
-    return _image_response(response)
+    async with _get_generation_semaphore():
+        response = await client.images.edit(**payload)
+        return _image_response(response)
 
 
 def _image_response(response) -> List[Dict[str, str]]:

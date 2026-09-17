@@ -7,7 +7,7 @@ from typing import Dict, Optional
 
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import HTTPException, Request, Response
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 from config_default import REQUEST_TIMEOUT, SESSION_COOKIE_NAME, SESSION_MAX_AGE
 
@@ -76,13 +76,46 @@ def set_session_cookie(
     )
 
 
-def create_openai_client(request: Request) -> OpenAI:
-    """根据当前会话创建 OpenAI 客户端。"""
+# ---------------------------------------------------------------- OpenAI 客户端
+# AsyncOpenAI 内部持有 httpx.AsyncClient 连接池，按会话复用可以省掉每次请求
+# 重建连接的开销；键里带上 apiKey，换 Key 或换 Base URL 时会自然拿到新实例。
+_client_cache: Dict[str, AsyncOpenAI] = {}
+_CLIENT_CACHE_LIMIT = 16
+
+
+def create_openai_client(request: Request) -> AsyncOpenAI:
+    """根据当前会话获取（或创建）异步 OpenAI 客户端。
+
+    返回的是 ``AsyncOpenAI``，它的所有调用都必须 ``await``：
+    直接调用只会得到协程对象，不会真正发起 HTTP 请求。
+    异步客户端是图片生成接口不阻塞事件循环的前提。
+    """
     session = get_session(request)
     if not session:
         raise HTTPException(status_code=401, detail="未登录或会话已失效。")
-    return OpenAI(
+
+    cache_key = session["baseURL"] + "\n" + session["apiKey"]
+    client = _client_cache.get(cache_key)
+    if client is not None:
+        return client
+
+    # 缓存超过上限时淘汰最早创建的实例，避免会话不断累积连接池。
+    if len(_client_cache) >= _CLIENT_CACHE_LIMIT:
+        _, stale = _client_cache.popitem()
+        stale.close()
+
+    client = AsyncOpenAI(
         api_key=session["apiKey"],
         base_url=session["baseURL"],
         timeout=REQUEST_TIMEOUT,
+        max_retries=2,
     )
+    _client_cache[cache_key] = client
+    return client
+
+
+async def close_openai_clients() -> None:
+    """关闭所有缓存的客户端连接池（服务关闭时调用）。"""
+    while _client_cache:
+        _, client = _client_cache.popitem()
+        await client.close()
