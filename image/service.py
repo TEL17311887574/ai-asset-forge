@@ -7,7 +7,7 @@ from typing import BinaryIO, Dict, List, Optional, Union
 from fastapi import HTTPException, UploadFile
 from openai import APIError, OpenAI
 
-from config_default import (
+from config import (
     MAX_FILE_BYTES,
     MAX_PROMPT_LENGTH,
     MAX_SOURCE_FILES,

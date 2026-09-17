@@ -1,24 +1,20 @@
-"""项目配置。"""
+"""兼容垫片：配置已迁移到 ``config.toml`` + ``config.py``。
 
-from pathlib import Path
+保留本模块是为了让历史的 ``from config_default import ...`` 继续可用，
+新代码请直接 ``from config import ...`` 或 ``import config``。
+"""
 
-# OpenAI 模型
-MODEL = "gpt-image-2"
-
-# 请求超时（秒）
-REQUEST_TIMEOUT = 180.0
-
-# 提示词长度限制
-MAX_PROMPT_LENGTH = 4000
-
-# 最多上传原图数量
-MAX_SOURCE_FILES = 16
-
-# 单文件大小限制（字节）
-MAX_FILE_BYTES = 20 * 1024 * 1024
-
-# 会话有效期（秒）
-SESSION_MAX_AGE = 30 * 24 * 60 * 60
-
-# 预设提示词模板目录
-PROMPTS_DIR = Path(__file__).parent / "prompts"
+from config import (  # noqa: F401
+    AVAILABLE_MODELS,
+    HOST,
+    MAX_FILE_BYTES,
+    MAX_PROMPT_LENGTH,
+    MAX_SOURCE_FILES,
+    MODEL,
+    PORT,
+    PROMPTS_DIR,
+    RELOAD,
+    REQUEST_TIMEOUT,
+    SESSION_COOKIE_NAME,
+    SESSION_MAX_AGE,
+)

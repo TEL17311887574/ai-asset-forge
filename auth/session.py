@@ -9,7 +9,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from fastapi import HTTPException, Request, Response
 from openai import OpenAI
 
-from config_default import REQUEST_TIMEOUT, SESSION_MAX_AGE
+from config import REQUEST_TIMEOUT, SESSION_MAX_AGE
 
 
 # 会话加密密钥文件（首次启动自动生成）

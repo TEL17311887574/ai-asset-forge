@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 
 from auth.schema import LoginRequest
 from auth.session import encode_session, get_session, set_session_cookie
-from config_default import MODEL, SESSION_MAX_AGE
+from config import AVAILABLE_MODELS, MODEL, SESSION_MAX_AGE
 
 
 router = APIRouter()
