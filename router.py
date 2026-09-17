@@ -4,7 +4,7 @@ from fastapi import APIRouter, Request
 
 from auth.router import router as auth_router
 from auth.session import get_session
-from config import AVAILABLE_MODELS, MODEL
+from config_default import AVAILABLE_MODELS, MODEL
 from image.router import router as image_router
 
 

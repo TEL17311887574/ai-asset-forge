@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#0b0e0c" />
-    <title>GPT Image 2 · Creative Image Lab</title>
+    <title>Ai Asset Forge · Creative Image Lab</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -17,7 +17,7 @@
     <div class="app-shell">
       <aside class="sidebar">
         <div class="sidebar-brand">
-          <span class="brand-mark" aria-hidden="true">✦</span><span>GPT Image <em>2</em></span>
+          <span class="brand-mark" aria-hidden="true">✦</span><span>Ai Asset <em>Forge</em></span>
         </div>
         <div class="sidebar-context">
           <span class="context-pulse" aria-hidden="true"></span>
@@ -50,7 +50,7 @@
       <main class="main-stage">
         <header class="topbar">
           <div class="mobile-brand">
-            <span class="brand-mark" aria-hidden="true">✦</span><span>GPT Image <em>2</em></span>
+            <span class="brand-mark" aria-hidden="true">✦</span><span>Ai Asset <em>Forge</em></span>
           </div>
           <div class="conversation-heading">
             <span class="heading-kicker">IMAGE LAB / CHAT</span>
@@ -60,7 +60,7 @@
             <span class="topbar-meta-dot" aria-hidden="true"></span>
             <span>LOCAL SESSION</span>
             <span class="topbar-divider"></span>
-            <span>GPT IMAGE 2</span>
+            <span>AI ASSET FORGE</span>
           </div>
           <div class="mobile-actions">
             <button class="mobile-history" id="mobileHistory" type="button" aria-label="打开对话记录" aria-expanded="false"><i data-lucide="menu" aria-hidden="true"></i></button>
@@ -72,7 +72,7 @@
           <div class="welcome-screen" id="welcomeScreen">
             <div class="welcome-copy reveal reveal-copy">
               <div class="welcome-status"><span class="status-mark">✦</span><span>READY TO MAKE</span></div>
-              <p class="eyebrow">GPT IMAGE 2 / VISUAL WORKSPACE</p>
+              <p class="eyebrow">AI ASSET FORGE / VISUAL WORKSPACE</p>
               <h2>把一个想法，<br /><span>变成一张画面。</span></h2>
               <p class="welcome-description">描述画面、上传参考图，或从一张灵感开始。每一次生成，都会留在这段对话里。</p>
               <div class="welcome-actions">
@@ -120,20 +120,6 @@
               </div>
             </div>
             <div class="prompt-row">
-              <button
-                class="attach-button"
-                id="attachButton"
-                type="button"
-                title="上传参考图"
-                aria-label="上传参考图"
-              >
-                <i data-lucide="plus" aria-hidden="true"></i><input
-                  id="sourceInput"
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp"
-                  multiple
-                />
-              </button>
               <div class="prompt-input-wrap">
                 <div
                   id="prompt"
@@ -156,19 +142,33 @@
             </div>
             <div class="composer-toolbar">
               <div class="toolbar-left">
-                <button class="tool-pill" id="modeButton" type="button" aria-controls="modePopover" aria-expanded="false">
+                <button
+                  class="attach-button"
+                  id="attachButton"
+                  type="button"
+                  title="上传参考图"
+                  aria-label="上传参考图"
+                >
+                  <i data-lucide="plus" aria-hidden="true"></i><input
+                    id="sourceInput"
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    multiple
+                  />
+                </button><button class="tool-pill" id="modeButton" type="button" aria-controls="modePopover" aria-expanded="false">
                   <span class="tool-icon"><i data-lucide="image" aria-hidden="true"></i></span
-                  ><span id="modeLabel">默认</span
-                  ><span class="chevron"><i data-lucide="chevron-down" aria-hidden="true"></i></span></button
+                  ><span id="modeLabel">默认</span></button
                 ><button class="tool-pill" id="settingsButton" type="button" aria-controls="settingsPopover" aria-expanded="false">
-                  <span class="tool-icon"><i data-lucide="sliders-horizontal" aria-hidden="true"></i></span><span>参数</span></button
-                ><span class="attachment-count" id="sourceMeta"
+                  <span class="tool-icon"><i data-lucide="sliders-horizontal" aria-hidden="true"></i></span><span>参数</span></button><span class="attachment-count" id="sourceMeta"
                   >最多 16 张参考图</span
                 >
               </div>
               <div class="toolbar-right">
                 <span id="promptCount">0 / 4000</span
-                ><span class="shortcut-hint">↵ 发送 · ⇧↵ 换行</span>
+                ><button class="tool-pill" id="modelButton" type="button" aria-controls="modelPopover" aria-expanded="false">
+                  <span class="tool-icon"><i data-lucide="cpu" aria-hidden="true"></i></span><span id="modelLabel">gpt-image-2</span
+                  ><span class="chevron"><i data-lucide="chevron-down" aria-hidden="true"></i></span></button
+                >
               </div>
             </div>
           </form>
@@ -319,9 +319,7 @@
     </div>
     <div class="cursor-dot" aria-hidden="true"></div>
     <div class="cursor-ring" aria-hidden="true"></div>
-    <script src="/vendor/lucide/lucide.min.js"></script>
-    <script type="module" src="/app.js"></script>
-      <div
+    <div
       class="mode-popover hidden"
       id="modePopover"
       role="group"
@@ -376,181 +374,201 @@
       </div>
       <div class="mode-popover-glow" aria-hidden="true"></div>
     </div>
-<div
+    <div
       class="settings-popover hidden"
       id="settingsPopover"
       role="group"
       aria-labelledby="settingsPopoverTitle"
     >
-              <div class="popover-title">
-                <span id="settingsPopoverTitle">生成参数</span
-                ><button type="button" class="close-popover" id="closeSettings" aria-label="关闭生成参数">
-                  <i data-lucide="x" aria-hidden="true"></i>
-                </button>
-              </div>
-              <div class="setting-group">
-                <span class="setting-label">画面比例</span>
-                <div
-                  class="ratio-grid"
-                  id="ratioGrid"
-                  role="radiogroup"
-                  aria-label="画面比例"
-                >
-                  <button
-                    type="button"
-                    data-ratio="1:1"
-                    class="ratio-option active"
-                    role="radio"
-                    aria-checked="true"
-                  >
-                    智能<span>1:1</span></button
-                  ><button
-                    type="button"
-                    data-ratio="3:4"
-                    class="ratio-option"
-                    role="radio"
-                    aria-checked="false"
-                  >
-                    ▯<span>3:4</span></button
-                  ><button
-                    type="button"
-                    data-ratio="16:9"
-                    class="ratio-option"
-                    role="radio"
-                    aria-checked="false"
-                  >
-                    ▱<span>16:9</span></button
-                  ><button
-                    type="button"
-                    data-ratio="4:3"
-                    class="ratio-option"
-                    role="radio"
-                    aria-checked="false"
-                  >
-                    ▱<span>4:3</span></button
-                  ><button
-                    type="button"
-                    data-ratio="9:16"
-                    class="ratio-option"
-                    role="radio"
-                    aria-checked="false"
-                  >
-                    ▯<span>9:16</span></button
-                  ><button
-                    type="button"
-                    data-ratio="2:3"
-                    class="ratio-option"
-                    role="radio"
-                    aria-checked="false"
-                  >
-                    ▯<span>2:3</span></button
-                  ><button
-                    type="button"
-                    data-ratio="3:2"
-                    class="ratio-option"
-                    role="radio"
-                    aria-checked="false"
-                  >
-                    ▱<span>3:2</span></button
-                  ><button
-                    type="button"
-                    data-ratio="5:4"
-                    class="ratio-option"
-                    role="radio"
-                    aria-checked="false"
-                  >
-                    ▱<span>5:4</span></button
-                  ><button
-                    type="button"
-                    data-ratio="4:5"
-                    class="ratio-option"
-                    role="radio"
-                    aria-checked="false"
-                  >
-                    ▯<span>4:5</span></button
-                  ><button
-                    type="button"
-                    data-ratio="21:9"
-                    class="ratio-option"
-                    role="radio"
-                    aria-checked="false"
-                  >
-                    ▱<span>21:9</span>
-                  </button><button
-                    type="button"
-                    data-ratio="original"
-                    class="ratio-option original-ratio hidden"
-                    role="radio"
-                    aria-checked="false"
-                    aria-label="原图比例"
-                  >
-                    ◫<span>原图</span>
-                  </button>
-                </div>
-              </div>
-              <div class="setting-grid">
-                <label
-                  >分辨率<select id="resolution">
-                    <option value="1K">1K · 标准</option>
-                    <option value="2K">2K · 高清</option>
-                    <option value="3K">3K · 超高清</option>
-                    <option value="4K">4K · 超清</option>
-                  </select></label
-                ><label
-                  >质量<select id="quality">
-                    <option value="medium">Medium</option>
-                    <option value="low">Low · 更快</option>
-                    <option value="high">High · 更细腻</option>
-                  </select></label
-                ><label
-                  >生成数量<select id="count">
-                    <option value="1">1 张</option>
-                    <option value="2">2 张</option>
-                    <option value="3">3 张</option>
-                    <option value="4">4 张</option>
-                  </select></label
-                >
-              </div>
-              <div class="size-row">
-                <div>
-                  <span class="setting-label">具体尺寸</span>
-                  <div class="size-inputs">
-                    <input
-                      id="widthInput"
-                      type="number"
-                      min="64"
-                      max="3840"
-                      step="16"
-                      value="1024"
-                      aria-label="宽度"
-                    /><span>×</span
-                    ><input
-                      id="heightInput"
-                      type="number"
-                      min="64"
-                      max="3840"
-                      step="16"
-                      value="1024"
-                      aria-label="高度"
-                    /><span>px</span>
-                  </div>
-                </div>
-                <button
-                  class="link-button"
-                  id="linkSize"
-                  type="button"
-                  aria-pressed="true"
-                >
-                  锁定比例
-                </button>
-              </div>
-              <div class="dimension-note" id="dimensionNote">
-                1K · 长边 1024 px · 1:1
-              </div>
-              <label class="fidelity-option hidden" id="fidelityField"
-                ><input id="fidelity" type="checkbox" />
-                高保真保留人物与构图</label
-              >
-            </div>
-    </body>
+      <div class="popover-title">
+        <span id="settingsPopoverTitle">生成参数</span
+        ><button type="button" class="close-popover" id="closeSettings" aria-label="关闭生成参数">
+          <i data-lucide="x" aria-hidden="true"></i>
+        </button>
+      </div>
+      <div class="setting-group">
+        <span class="setting-label">画面比例</span>
+        <div
+          class="ratio-grid"
+          id="ratioGrid"
+          role="radiogroup"
+          aria-label="画面比例"
+        >
+          <button
+            type="button"
+            data-ratio="1:1"
+            class="ratio-option active"
+            role="radio"
+            aria-checked="true"
+          >
+            智能<span>1:1</span></button
+          ><button
+            type="button"
+            data-ratio="3:4"
+            class="ratio-option"
+            role="radio"
+            aria-checked="false"
+          >
+            ▯<span>3:4</span></button
+          ><button
+            type="button"
+            data-ratio="16:9"
+            class="ratio-option"
+            role="radio"
+            aria-checked="false"
+          >
+            ▱<span>16:9</span></button
+          ><button
+            type="button"
+            data-ratio="4:3"
+            class="ratio-option"
+            role="radio"
+            aria-checked="false"
+          >
+            ▱<span>4:3</span></button
+          ><button
+            type="button"
+            data-ratio="9:16"
+            class="ratio-option"
+            role="radio"
+            aria-checked="false"
+          >
+            ▯<span>9:16</span></button
+          ><button
+            type="button"
+            data-ratio="2:3"
+            class="ratio-option"
+            role="radio"
+            aria-checked="false"
+          >
+            ▯<span>2:3</span></button
+          ><button
+            type="button"
+            data-ratio="3:2"
+            class="ratio-option"
+            role="radio"
+            aria-checked="false"
+          >
+            ▱<span>3:2</span></button
+          ><button
+            type="button"
+            data-ratio="5:4"
+            class="ratio-option"
+            role="radio"
+            aria-checked="false"
+          >
+            ▱<span>5:4</span></button
+          ><button
+            type="button"
+            data-ratio="4:5"
+            class="ratio-option"
+            role="radio"
+            aria-checked="false"
+          >
+            ▯<span>4:5</span></button
+          ><button
+            type="button"
+            data-ratio="21:9"
+            class="ratio-option"
+            role="radio"
+            aria-checked="false"
+          >
+            ▱<span>21:9</span>
+          </button><button
+            type="button"
+            data-ratio="original"
+            class="ratio-option original-ratio hidden"
+            role="radio"
+            aria-checked="false"
+            aria-label="原图比例"
+          >
+            ◫<span>原图</span>
+          </button>
+        </div>
+      </div>
+      <div class="setting-grid">
+        <label
+          >分辨率<select id="resolution">
+            <option value="1K">1K · 标准</option>
+            <option value="2K">2K · 高清</option>
+            <option value="3K">3K · 超高清</option>
+            <option value="4K">4K · 超清</option>
+          </select></label
+        ><label
+          >质量<select id="quality">
+            <option value="medium">Medium</option>
+            <option value="low">Low · 更快</option>
+            <option value="high">High · 更细腻</option>
+          </select></label
+        ><label
+          >生成数量<select id="count">
+            <option value="1">1 张</option>
+            <option value="2">2 张</option>
+            <option value="3">3 张</option>
+            <option value="4">4 张</option>
+          </select></label
+        >
+      </div>
+      <div class="size-row">
+        <div>
+          <span class="setting-label">具体尺寸</span>
+          <div class="size-inputs">
+            <input
+              id="widthInput"
+              type="number"
+              min="64"
+              max="3840"
+              step="16"
+              value="1024"
+              aria-label="宽度"
+            /><span>×</span
+            ><input
+              id="heightInput"
+              type="number"
+              min="64"
+              max="3840"
+              step="16"
+              value="1024"
+              aria-label="高度"
+            /><span>px</span>
+          </div>
+        </div>
+        <button
+          class="link-button"
+          id="linkSize"
+          type="button"
+          aria-pressed="true"
+        >
+          锁定比例
+        </button>
+      </div>
+      <div class="dimension-note" id="dimensionNote">
+        1K · 长边 1024 px · 1:1
+      </div>
+      <label class="fidelity-option hidden" id="fidelityField"
+        ><input id="fidelity" type="checkbox" />
+        高保真保留人物与构图</label
+      >
+    </div>
+    <div
+      class="model-popover hidden"
+      id="modelPopover"
+      role="group"
+      aria-labelledby="modelPopoverTitle"
+    >
+      <div class="popover-title">
+        <span id="modelPopoverTitle">选择模型</span>
+        <button type="button" class="close-popover" id="closeModel" aria-label="关闭模型选择">
+          <i data-lucide="x" aria-hidden="true"></i>
+        </button>
+      </div>
+      <p class="mode-popover-desc">
+        可用模型来自服务端 config_default.py 的 AVAILABLE_MODELS。
+      </p>
+      <div class="model-options" id="modelOptions" aria-label="模型选项"></div>
+    </div>
+    <script src="/vendor/lucide/lucide.min.js"></script>
+    <script type="module" src="/app.js"></script>
+
+  </body>
 </html>

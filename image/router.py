@@ -17,6 +17,7 @@ from image.service import (
     read_image_files,
     safe_count,
     safe_input_fidelity,
+    safe_model,
     safe_quality,
     safe_size,
 )
@@ -64,6 +65,7 @@ async def generate(request: Request, payload: GenerateRequest):
             size=size,
             quality=quality,
             n=count,
+            model=payload.model,
         )
         return {"images": images}
     except Exception as exc:  # noqa: BLE001 - 统一兜底为 JSON 响应
@@ -79,6 +81,7 @@ async def edit(
     quality: Annotated[str, Form()] = "medium",
     n: Annotated[Union[int, str], Form()] = 1,
     mode: Annotated[str, Form()] = "edit",
+    model: Annotated[Optional[str], Form()] = None,
     input_fidelity: Annotated[str, Form()] = "low",
     mask: Annotated[Optional[UploadFile], Form()] = None,
 ):
@@ -107,6 +110,7 @@ async def edit(
             input_fidelity=safe_input_fidelity(input_fidelity),
             n=safe_count(n),
             mask=mask_data,
+            model=model,
         )
         return {"images": images_result}
     except Exception as exc:  # noqa: BLE001 - 统一兜底为 JSON 响应

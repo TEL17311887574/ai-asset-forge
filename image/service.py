@@ -7,7 +7,8 @@ from typing import BinaryIO, Dict, List, Optional, Union
 from fastapi import HTTPException, UploadFile
 from openai import APIError, OpenAI
 
-from config import (
+from config_default import (
+    AVAILABLE_MODELS,
     MAX_FILE_BYTES,
     MAX_PROMPT_LENGTH,
     MAX_SOURCE_FILES,
@@ -52,6 +53,7 @@ def build_character_turnaround_prompt(user_prompt: str) -> str:
     parts = [user_prompt.strip(), load_prompt_template(_TURNAROUND_TEMPLATE)]
     return "\n\n".join(part for part in parts if part)
 
+
 def safe_size(value: Optional[str]) -> str:
     """校验 GPT Image 2 自定义尺寸。"""
     allowed = {"auto", "1024x1024", "1536x1024", "1024x1536"}
@@ -92,6 +94,13 @@ def safe_count(value: Union[int, str, None]) -> int:
     except (TypeError, ValueError):
         return 1
     return number if 1 <= number <= 4 else 1
+
+
+def safe_model(value: Optional[str]) -> str:
+    """校验请求中的模型名，未指定或不在白名单时回退到配置默认值。"""
+    if value in AVAILABLE_MODELS:
+        return value
+    return MODEL
 
 
 def to_openai_file(content: bytes, filename: str = "image.png") -> BinaryIO:
@@ -135,10 +144,11 @@ def generate_image(
     size: str,
     quality: str,
     n: int,
+    model: Optional[str] = None,
 ) -> str:
     """调用 OpenAI API 生成图片，返回 Base64。"""
     response = client.images.generate(
-        model=MODEL,
+        model=safe_model(model),
         prompt=prompt,
         size=size,
         quality=quality,
@@ -157,6 +167,7 @@ def edit_image(
     input_fidelity: str,
     n: int,
     mask: Optional[bytes] = None,
+    model: Optional[str] = None,
 ) -> str:
     """调用 OpenAI API 编辑图片，返回 Base64。"""
     image_parts = [
@@ -164,7 +175,7 @@ def edit_image(
         for index, data in enumerate(images)
     ]
     payload: Dict[str, object] = {
-        "model": MODEL,
+        "model": safe_model(model),
         "image": image_parts[0] if len(image_parts) == 1 else image_parts,
         "prompt": prompt,
         "size": size,

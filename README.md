@@ -1,4 +1,4 @@
-# GPT Image 2 Studio
+# Ai Asset Forge
 
 一个可在本地运行的网页工具，**纯 Python（FastAPI 后端）实现，无需 Node.js / node_modules**，支持：
 
@@ -40,7 +40,7 @@
 ```text
 ├── main.py                 # FastAPI 应用和启动入口
 ├── router.py               # 汇总所有业务路由
-├── config_default.py       # 默认配置
+├── config_default.py       # 全部可调参数（超时、模型、限制、会话）
 ├── auth/
 │   ├── router.py           # 登录、会话、退出接口
 │   ├── schema.py           # 登录请求模型

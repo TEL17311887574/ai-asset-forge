@@ -9,7 +9,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from fastapi import HTTPException, Request, Response
 from openai import OpenAI
 
-from config import REQUEST_TIMEOUT, SESSION_MAX_AGE
+from config_default import REQUEST_TIMEOUT, SESSION_COOKIE_NAME, SESSION_MAX_AGE
 
 
 # 会话加密密钥文件（首次启动自动生成）
@@ -56,7 +56,7 @@ def decode_session(token: Optional[str]) -> Optional[Dict[str, str]]:
 
 def get_session(request: Request) -> Optional[Dict[str, str]]:
     """从请求 Cookie 中读取并解密会话。"""
-    return decode_session(request.cookies.get("inx_session"))
+    return decode_session(request.cookies.get(SESSION_COOKIE_NAME))
 
 
 def set_session_cookie(
@@ -66,7 +66,7 @@ def set_session_cookie(
 ) -> None:
     """将加密后的会话 Token 写入 Cookie。"""
     response.set_cookie(
-        key="inx_session",
+        key=SESSION_COOKIE_NAME,
         value=token,
         max_age=max_age,
         path="/",

@@ -3,4 +3,3 @@ uvicorn>=0.30
 openai>=1.50
 python-multipart>=0.0.20
 cryptography>=42.0
-tomli>=2.0; python_version < '3.11'

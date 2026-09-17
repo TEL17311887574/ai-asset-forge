@@ -74,6 +74,8 @@ const state = {
   activeMaskIndex: 0,
   maskEditorOpen: false,
   authenticated: false,
+  model: "gpt-image-2",
+  availableModels: [],
 };
 const $ = (selector) => document.querySelector(selector);
 const refreshIcons = () =>
@@ -109,6 +111,11 @@ const els = {
   submitButton: $("#submitButton"),
   submitIcon: $("#submitIcon"),
   settingsButton: $("#settingsButton"),
+  modelButton: $("#modelButton"),
+  modelLabel: $("#modelLabel"),
+  modelPopover: $("#modelPopover"),
+  modelOptions: $("#modelOptions"),
+  closeModel: $("#closeModel"),
   settingsPopover: $("#settingsPopover"),
   closeSettings: $("#closeSettings"),
   modePopover: $("#modePopover"),
@@ -1663,6 +1670,7 @@ async function submitGeneration() {
     prompt,
     originalPrompt: rawPrompt,
     mode: effectiveMode,
+    model: state.model,
     ratio: state.ratio,
     resolution: state.resolution,
     quality: els.quality.value,
@@ -1706,6 +1714,7 @@ async function submitGeneration() {
           size: settings.size,
           quality: settings.quality,
           n: settings.count,
+          model: state.model,
         }),
       });
     else {
@@ -1723,6 +1732,7 @@ async function submitGeneration() {
         n: settings.count,
         // 后端据此决定是否套用角色三视图模板。
         mode: effectiveMode,
+        model: state.model,
       }).forEach(([key, value]) => data.append(key, value));
       if (els.fidelity.checked) data.append("input_fidelity", "high");
       if (effectiveMode === "mask") {
@@ -1811,15 +1821,21 @@ document.addEventListener("click", (event) => {
   if (
     !els.settingsPopover.classList.contains("hidden") &&
     !els.settingsPopover.contains(event.target) &&
-    !event.target.closest("#settingsButton, #modeButton")
+    !event.target.closest("#settingsButton, #modeButton, #modelButton")
   )
     setSettingsOpen(false);
   if (
     !els.modePopover.classList.contains("hidden") &&
     !els.modePopover.contains(event.target) &&
-    !event.target.closest("#modeButton")
+    !event.target.closest("#modeButton, #modelButton")
   )
     setModePopoverOpen(false);
+  if (
+    !els.modelPopover.classList.contains("hidden") &&
+    !els.modelPopover.contains(event.target) &&
+    !event.target.closest("#modelButton")
+  )
+    setModelPopoverOpen(false);
 });
 document.addEventListener("keydown", (event) => {
   if (!els.authModal.classList.contains("hidden")) {
@@ -1896,6 +1912,7 @@ document.querySelectorAll("[data-mode]").forEach((button) =>
 );
 els.settingsButton.addEventListener("click", () => {
   setModePopoverOpen(false);
+  setModelPopoverOpen(false);
   toggleSettingsPopover();
 });
 els.closeSettings.addEventListener("click", () =>
@@ -1904,8 +1921,15 @@ els.closeSettings.addEventListener("click", () =>
 els.closeMode?.addEventListener("click", () =>
   setModePopoverOpen(false),
 );
+els.modelButton.addEventListener("click", () => {
+  setSettingsOpen(false);
+  setModePopoverOpen(false);
+  toggleModelPopover();
+});
+els.closeModel?.addEventListener("click", () => setModelPopoverOpen(false));
 els.modeButton.addEventListener("click", () => {
   setSettingsOpen(false);
+  setModelPopoverOpen(false);
   toggleModePopover();
 });
 function setSettingsOpen(open) {
@@ -1960,9 +1984,71 @@ function positionModePopover() {
 function toggleModePopover() {
   setModePopoverOpen(els.modePopover.classList.contains("hidden"));
 }
+// ---------- 模型选择器（需求6） ----------
+const MODEL_DESCRIPTIONS = {
+  "gpt-image-2": "快速、经济的通用出图模型",
+  "gpt-image-2.5": "更高质量、更高保真度",
+};
+function renderModelOptions() {
+  const models = state.availableModels.length
+    ? state.availableModels
+    : [state.model];
+  els.modelOptions.innerHTML = "";
+  models.forEach((name) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "model-option" + (name === state.model ? " active" : "");
+    button.dataset.model = name;
+    button.setAttribute("role", "radio");
+    button.setAttribute("aria-checked", String(name === state.model));
+    const desc = MODEL_DESCRIPTIONS[name] || "可用模型";
+    button.innerHTML =
+      '<span class="model-option-icon"><i data-lucide="cpu"></i></span>' +
+      '<span class="model-option-copy">' +
+      `<span class="model-option-title">${escapeHtml(name)}</span>` +
+      `<span class="model-option-desc">${escapeHtml(desc)}</span>` +
+      "</span>" +
+      '<span class="model-option-state"><i data-lucide="check"></i></span>';
+    button.addEventListener("click", () => selectModel(name));
+    els.modelOptions.appendChild(button);
+  });
+  refreshIcons();
+  els.modelLabel.textContent = state.model;
+}
+function selectModel(name) {
+  if (!name) return;
+  state.model = name;
+  renderModelOptions();
+  setModelPopoverOpen(false);
+  showToast(`已切换到 ${name}`);
+}
+function setModelPopoverOpen(open) {
+  els.modelPopover.classList.toggle("hidden", !open);
+  els.modelButton.setAttribute("aria-expanded", String(open));
+  if (open) positionModelPopover();
+}
+function positionModelPopover() {
+  const rect = els.modelButton.getBoundingClientRect();
+  const popup = els.modelPopover;
+  popup.style.visibility = "hidden";
+  popup.classList.remove("hidden");
+  const popupRect = popup.getBoundingClientRect();
+  let left = rect.left;
+  const maxLeft = window.innerWidth - popupRect.width - 10;
+  left = Math.max(10, Math.min(left, maxLeft));
+  let top = rect.top - popupRect.height - 10;
+  if (top < 10) top = rect.bottom + 10;
+  popup.style.left = left + "px";
+  popup.style.top = top + "px";
+  popup.style.visibility = "";
+}
+function toggleModelPopover() {
+  setModelPopoverOpen(els.modelPopover.classList.contains("hidden"));
+}
 window.addEventListener("resize", () => {
   if (!els.modePopover.classList.contains("hidden")) positionModePopover();
   if (!els.settingsPopover.classList.contains("hidden")) positionSettingsPopover();
+  if (!els.modelPopover.classList.contains("hidden")) positionModelPopover();
 });
 els.resolution.addEventListener("change", () => {
   state.resolution = els.resolution.value;
@@ -2148,6 +2234,25 @@ async function checkHealth() {
     els.connection.innerHTML = '<span class="dot bad"></span>服务未连接';
   }
 }
+async function loadModels() {
+  try {
+    const response = await fetch("/api/models");
+    if (!response.ok) return;
+    const data = await response.json();
+    if (Array.isArray(data.available) && data.available.length) {
+      state.availableModels = data.available;
+      // 若当前模型不在服务端白名单中，回退到服务端默认值。
+      if (!data.available.includes(state.model)) {
+        state.model = data.default || data.available[0];
+      }
+      renderModelOptions();
+    }
+  } catch (error) {
+    // 模型列表不可用时保留默认值，不打断页面初始化。
+    console.warn("加载模型列表失败：", error);
+  }
+}
+
 async function init() {
   try {
     state.conversations = sortConversations(await getConversations());
@@ -2179,6 +2284,7 @@ async function init() {
   setRatio(state.ratio);
   updateDimensionPreview();
   await refreshAuthSession();
+  await loadModels();
   checkHealth();
   refreshIcons();
   initAmbientMotion();
