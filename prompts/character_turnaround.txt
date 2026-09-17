@@ -1,0 +1,17 @@
+Regardless of the background appearing in the reference image (white, outdoor, or any environment), replace it entirely and render the final output as a premium studio portrait diptych with a pure white seamless backdrop. The white background must be perfectly consistent across all panels with absolutely no environmental elements, shadows, or gradients.
+
+Generate a single image with an asymmetric two-part layout:
+
+- Left panel (~1/3 of total width): A close-up upper-body portrait (bust shot) of the subject, framed from head to mid-torso/waist. The subject must face the camera in a strict direct frontal view—eyes looking straight into the lens, shoulders perfectly parallel to the image plane, symmetrical facial composition with zero head rotation or tilt. Natural posture, showcasing facial expression, hairstyle, and upper garment details.
+- Right panel (~2/3 of total width): A full-body three-view orthographic set of the same subject, precisely aligned in scale and vertical baseline, containing:
+  • Front view: Full height from head to toe, facing camera, neutral stance
+  • Side view: Standard 90° pure profile, full body, natural posture
+  • Back view: Rear full-body view showing back of head, torso, and legs, maintaining identical framing height and foot alignment as the other two
+
+Separate the left and right panels with one thin vertical divider line. Within the right panel, separate the three full-body views with two additional thin vertical lines—all straight, evenly spaced, and presenting a clean, minimalist layout design.
+
+Apply unified controlled studio lighting throughout: soft yet directional key light, natural shadow shaping, authentic light-dark contrast. For the left upper-body portrait: crisp eye details, realistic skin texture, and accurate fabric rendering (strictly prohibit excessive skin smoothing or airbrushing). For the right full-body views: consistent light logic across all three angles, realistic fabric drape, natural limb proportions, and accurate light falloff on contours. Hair texture must remain authentic in all views.
+
+The subject's identity, facial proportions, hairstyle, body proportions, outfit, and overall styling must exactly match the reference image; however, the background across all panels must be unified as the identical pure white studio backdrop.
+
+Strictly prohibit adding any text, watermarks, logos, subtitles, UI elements, borders, panel labels (A/B/C/1/2/3), angle annotations, measurement guides, or any other additional content of any kind.

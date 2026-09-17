@@ -1,0 +1,505 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0b0e0c" />
+    <title>GPT Image 2 · Creative Image Lab</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="sidebar-brand">
+          <span class="brand-mark" aria-hidden="true">✦</span><span>GPT Image <em>2</em></span>
+        </div>
+        <div class="sidebar-context">
+          <span class="context-pulse" aria-hidden="true"></span>
+          <span>PRIVATE CREATIVE LAB</span>
+        </div>
+        <button class="new-chat" id="newConversation" type="button">
+          <i data-lucide="plus" aria-hidden="true"></i><span>新建对话</span><kbd>⌘ K</kbd>
+        </button>
+        <div class="sidebar-label">
+          <span>对话记录</span
+          ><span class="conversation-total" id="conversationTotal">0</span>
+        </div>
+        <nav
+          class="conversation-list"
+          id="conversationList"
+          aria-label="对话记录"
+        ></nav>
+        <div class="sidebar-foot">
+          <span class="connection" id="connectionState"
+            ><span class="dot" aria-hidden="true"></span>检查服务状态…</span
+          ><div class="sidebar-account">
+            <span class="local-badge">本地数据库</span>
+            <button type="button" class="account-button" id="authButton" aria-label="登录">
+              <i data-lucide="log-in" aria-hidden="true"></i><span>登录</span>
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main-stage">
+        <header class="topbar">
+          <div class="mobile-brand">
+            <span class="brand-mark" aria-hidden="true">✦</span><span>GPT Image <em>2</em></span>
+          </div>
+          <div class="conversation-heading">
+            <span class="heading-kicker">IMAGE LAB / CHAT</span>
+            <h1 id="conversationTitle">新建对话</h1>
+          </div>
+          <div class="topbar-meta" aria-label="工作台状态">
+            <span class="topbar-meta-dot" aria-hidden="true"></span>
+            <span>LOCAL SESSION</span>
+            <span class="topbar-divider"></span>
+            <span>GPT IMAGE 2</span>
+          </div>
+          <div class="mobile-actions">
+            <button class="mobile-history" id="mobileHistory" type="button" aria-label="打开对话记录" aria-expanded="false"><i data-lucide="menu" aria-hidden="true"></i></button>
+            <button class="mobile-new" id="mobileNewConversation" type="button" aria-label="新建对话"><i data-lucide="plus" aria-hidden="true"></i></button>
+          </div>
+        </header>
+
+        <section class="conversation-stage" id="conversationStage">
+          <div class="welcome-screen" id="welcomeScreen">
+            <div class="welcome-copy reveal reveal-copy">
+              <div class="welcome-status"><span class="status-mark">✦</span><span>READY TO MAKE</span></div>
+              <p class="eyebrow">GPT IMAGE 2 / VISUAL WORKSPACE</p>
+              <h2>把一个想法，<br /><span>变成一张画面。</span></h2>
+              <p class="welcome-description">描述画面、上传参考图，或从一张灵感开始。每一次生成，都会留在这段对话里。</p>
+              <div class="welcome-actions">
+                <button class="hero-action" type="button" data-prompt="一间被午后阳光照亮的植物工作室，电影级光影">
+                  <span>开始创作</span><span aria-hidden="true"><i data-lucide="arrow-up-right"></i></span>
+                </button>
+                <span class="hero-note">LOCAL · PRIVATE · 16 REFS</span>
+              </div>
+              <div class="suggestions reveal reveal-suggestions">
+                <span class="suggestion-label">TRY A DIRECTION</span>
+                <button type="button" data-prompt="一间被午后阳光照亮的植物工作室，电影级光影">植物工作室</button>
+                <button type="button" data-prompt="未来城市雨夜街头，霓虹倒影，广角摄影">未来城市</button>
+                <button type="button" data-prompt="一只穿宇航服的橘猫，站在月球表面，细节丰富">月球猫咪</button>
+              </div>
+            </div>
+            <div class="welcome-visual reveal reveal-visual" data-parallax="0.12" aria-hidden="true">
+              <div class="visual-frame">
+                <img src="https://images.unsplash.com/photo-1518005020951-eccb494ad742?auto=format&fit=crop&w=900&q=85" alt="" />
+                <div class="visual-shade"></div>
+                <div class="visual-caption"><span>01 / REFERENCE</span><strong>Light finds a way in.</strong></div>
+              </div>
+              <div class="visual-float"><span class="float-index">A</span><span>COMPOSITION<br />STUDY</span></div>
+            </div>
+            <div class="scroll-cue" aria-hidden="true"><span>SCROLL TO EXPLORE</span><i></i></div>
+          </div>
+          <div class="messages" id="messages" aria-live="polite"></div>
+        </section>
+
+        <div class="composer-wrap" id="composerWrap">
+          <div class="composer-hint" id="composerHint">
+            提示词会和本次对话一起保存在当前浏览器
+          </div>
+          <form class="composer" id="imageForm">
+            <div
+              class="composer-attachments hidden"
+              id="composerAttachments"
+            ></div>
+            <div class="mask-editor hidden" id="maskEditor">
+              <div class="mask-editor-strip">
+                <span><i data-lucide="scan-line" aria-hidden="true"></i>蒙版编辑</span>
+                <small id="maskEditorHint">选择参考图开始编辑</small>
+                <button type="button" class="text-button" id="openMaskEditor">
+                  <i data-lucide="expand" aria-hidden="true"></i>打开编辑器
+                </button>
+              </div>
+            </div>
+            <div class="prompt-row">
+              <button
+                class="attach-button"
+                id="attachButton"
+                type="button"
+                title="上传参考图"
+                aria-label="上传参考图"
+              >
+                <i data-lucide="image-plus" aria-hidden="true"></i><input
+                  id="sourceInput"
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  multiple
+                />
+              </button>
+              <div class="prompt-input-wrap">
+                <div
+                  id="prompt"
+                  class="prompt-editor"
+                  contenteditable="true"
+                  role="textbox"
+                  aria-multiline="true"
+                  data-placeholder="描述你想生成的画面… 输入 @ 选择参考图"
+                ></div>
+                <div class="mention-picker hidden" id="mentionPicker"></div>
+              </div>
+              <button
+                class="send-button"
+                id="submitButton"
+                type="submit"
+                aria-label="发送生成"
+              >
+                <span id="submitIcon"><i data-lucide="arrow-up" aria-hidden="true"></i></span>
+              </button>
+            </div>
+            <div class="composer-toolbar">
+              <div class="toolbar-left">
+                <button class="tool-pill" id="modeButton" type="button" aria-controls="settingsPopover" aria-expanded="false">
+                  <span class="tool-icon"><i data-lucide="image" aria-hidden="true"></i></span
+                  ><span id="modeLabel">图片生成</span
+                  ><span class="chevron"><i data-lucide="chevron-down" aria-hidden="true"></i></span></button
+                ><button class="tool-pill" id="settingsButton" type="button" aria-controls="settingsPopover" aria-expanded="false">
+                  <span class="tool-icon"><i data-lucide="sliders-horizontal" aria-hidden="true"></i></span><span>参数</span></button
+                ><span class="attachment-count" id="sourceMeta"
+                  >最多 16 张参考图</span
+                >
+              </div>
+              <div class="toolbar-right">
+                <span id="promptCount">0 / 4000</span
+                ><span class="shortcut-hint">⌘ ↵ 发送</span>
+              </div>
+            </div>
+            <div class="settings-popover hidden" id="settingsPopover">
+              <div class="popover-title">
+                <span>生成参数</span
+                ><button type="button" class="close-popover" id="closeSettings">
+                  <i data-lucide="x" aria-hidden="true"></i>
+                </button>
+              </div>
+              <div class="setting-group">
+                <span class="setting-label">生成模式</span>
+                <div class="segmented mode-segment">
+                  <button type="button" data-mode="generate" class="active">
+                    文生图</button
+                  ><button type="button" data-mode="edit">图生图</button
+                  ><button type="button" data-mode="mask">蒙版</button>><button type="button" data-mode="turnaround">人物三视图</button
+                </div>
+              </div>
+              <div class="setting-group">
+                <span class="setting-label">画面比例</span>
+                <div
+                  class="ratio-grid"
+                  id="ratioGrid"
+                  role="radiogroup"
+                  aria-label="画面比例"
+                >
+                  <button
+                    type="button"
+                    data-ratio="1:1"
+                    class="ratio-option active"
+                    role="radio"
+                    aria-checked="true"
+                  >
+                    智能<span>1:1</span></button
+                  ><button
+                    type="button"
+                    data-ratio="3:4"
+                    class="ratio-option"
+                    role="radio"
+                    aria-checked="false"
+                  >
+                    ▯<span>3:4</span></button
+                  ><button
+                    type="button"
+                    data-ratio="16:9"
+                    class="ratio-option"
+                    role="radio"
+                    aria-checked="false"
+                  >
+                    ▱<span>16:9</span></button
+                  ><button
+                    type="button"
+                    data-ratio="4:3"
+                    class="ratio-option"
+                    role="radio"
+                    aria-checked="false"
+                  >
+                    ▱<span>4:3</span></button
+                  ><button
+                    type="button"
+                    data-ratio="9:16"
+                    class="ratio-option"
+                    role="radio"
+                    aria-checked="false"
+                  >
+                    ▯<span>9:16</span></button
+                  ><button
+                    type="button"
+                    data-ratio="2:3"
+                    class="ratio-option"
+                    role="radio"
+                    aria-checked="false"
+                  >
+                    ▯<span>2:3</span></button
+                  ><button
+                    type="button"
+                    data-ratio="3:2"
+                    class="ratio-option"
+                    role="radio"
+                    aria-checked="false"
+                  >
+                    ▱<span>3:2</span></button
+                  ><button
+                    type="button"
+                    data-ratio="5:4"
+                    class="ratio-option"
+                    role="radio"
+                    aria-checked="false"
+                  >
+                    ▱<span>5:4</span></button
+                  ><button
+                    type="button"
+                    data-ratio="4:5"
+                    class="ratio-option"
+                    role="radio"
+                    aria-checked="false"
+                  >
+                    ▯<span>4:5</span></button
+                  ><button
+                    type="button"
+                    data-ratio="21:9"
+                    class="ratio-option"
+                    role="radio"
+                    aria-checked="false"
+                  >
+                    ▱<span>21:9</span>
+                  </button><button
+                    type="button"
+                    data-ratio="original"
+                    class="ratio-option original-ratio hidden"
+                    role="radio"
+                    aria-checked="false"
+                    aria-label="原图比例"
+                  >
+                    ◫<span>原图</span>
+                  </button>
+                </div>
+              </div>
+              <div class="setting-grid">
+                <label
+                  >分辨率<select id="resolution">
+                    <option value="1K">1K · 标准</option>
+                    <option value="2K">2K · 高清</option>
+                    <option value="3K">3K · 超高清</option>
+                    <option value="4K">4K · 超清</option>
+                  </select></label
+                ><label
+                  >质量<select id="quality">
+                    <option value="medium">Medium</option>
+                    <option value="low">Low · 更快</option>
+                    <option value="high">High · 更细腻</option>
+                  </select></label
+                ><label
+                  >生成数量<select id="count">
+                    <option value="1">1 张</option>
+                    <option value="2">2 张</option>
+                    <option value="3">3 张</option>
+                    <option value="4">4 张</option>
+                  </select></label
+                >
+              </div>
+              <div class="size-row">
+                <div>
+                  <span class="setting-label">具体尺寸</span>
+                  <div class="size-inputs">
+                    <input
+                      id="widthInput"
+                      type="number"
+                      min="64"
+                      max="3840"
+                      step="16"
+                      value="1024"
+                      aria-label="宽度"
+                    /><span>×</span
+                    ><input
+                      id="heightInput"
+                      type="number"
+                      min="64"
+                      max="3840"
+                      step="16"
+                      value="1024"
+                      aria-label="高度"
+                    /><span>px</span>
+                  </div>
+                </div>
+                <button
+                  class="link-button"
+                  id="linkSize"
+                  type="button"
+                  aria-pressed="true"
+                >
+                  锁定比例
+                </button>
+              </div>
+              <div class="dimension-note" id="dimensionNote">
+                1K · 长边 1024 px · 1:1
+              </div>
+              <label class="fidelity-option hidden" id="fidelityField"
+                ><input id="fidelity" type="checkbox" />
+                高保真保留人物与构图</label
+              >
+            </div>
+          </form>
+        </div>
+      </main>
+    </div>
+
+    <button class="sidebar-scrim hidden" id="sidebarScrim" type="button" aria-label="关闭对话记录"></button>
+    <div class="confirm-backdrop hidden" id="confirmBackdrop">
+      <div
+        class="confirm-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirmTitle"
+      >
+        <div class="confirm-icon"><i data-lucide="triangle-alert" aria-hidden="true"></i></div>
+        <h2 id="confirmTitle">确认操作</h2>
+        <p id="confirmText"></p>
+        <div class="confirm-actions">
+          <button type="button" class="cancel-button" id="cancelConfirm">
+            取消</button
+          ><button type="button" class="danger-button" id="confirmAction">
+            确认
+          </button>
+        </div>
+      </div>
+    </div>
+    <div class="toast hidden" id="toast" role="status"></div>
+    <div class="auth-modal hidden" id="authModal" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+      <div class="auth-modal-backdrop" data-auth-close></div>
+      <section class="auth-panel">
+        <aside class="auth-visual" aria-hidden="true">
+          <img src="https://images.unsplash.com/photo-1518005020951-eccb494ad742?auto=format&fit=crop&w=1200&q=88" alt="" loading="lazy" decoding="async" />
+          <div class="auth-visual-shade"></div>
+          <div class="auth-visual-top"><span>01 / PRIVATE ACCESS</span><i></i></div>
+          <div class="auth-visual-copy">
+            <span>SECURE CREATIVE SESSION</span>
+            <strong>Ideas stay<br />in your hands.</strong>
+            <small>ENCRYPTED · LOCAL HISTORY</small>
+          </div>
+        </aside>
+        <div class="auth-content">
+          <header class="auth-panel-head">
+            <div>
+              <span class="eyebrow">PRIVATE API SESSION</span>
+              <h2 id="authTitle">登录工作台</h2>
+              <p id="authSubtitle">连接你的 INX API，继续这段创作会话。</p>
+            </div>
+            <button type="button" class="icon-button" id="closeAuth" aria-label="关闭登录窗口">
+              <i data-lucide="x" aria-hidden="true"></i>
+            </button>
+          </header>
+          <form class="auth-form" id="authForm">
+            <label for="authApiKey">
+              <span>INX_TOKEN_API_KEY</span>
+            </label>
+            <div class="auth-input-shell">
+              <i data-lucide="key-round" aria-hidden="true"></i>
+              <input id="authApiKey" name="apiKey" type="password" autocomplete="off" required placeholder="输入 API Key" />
+              <button type="button" class="auth-key-toggle" id="authKeyToggle" aria-label="显示 API Key" aria-pressed="false" title="显示 API Key">
+                <i data-lucide="eye" aria-hidden="true"></i>
+              </button>
+            </div>
+            <label for="authBaseURL">
+              <span>INX_TOKEN_BASE_URL</span>
+            </label>
+            <div class="auth-input-shell">
+              <i data-lucide="globe-2" aria-hidden="true"></i>
+              <input id="authBaseURL" name="baseURL" type="url" required value="https://xfastapi.ai/v1" placeholder="https://.../v1" />
+            </div>
+            <p class="auth-security-note"><i data-lucide="shield-check" aria-hidden="true"></i><span>凭据经加密后用于当前服务端会话，历史对话仍保存在本机。</span></p>
+            <button type="submit" class="primary-button auth-submit" id="authSubmit"><span>进入工作台</span><i data-lucide="arrow-up-right" aria-hidden="true"></i></button>
+            <div class="auth-session-meta" aria-label="会话安全信息"><span>30 DAYS</span><i></i><span>HTTPONLY</span><i></i><span>ENCRYPTED</span></div>
+          </form>
+        </div>
+      </section>
+    </div>
+    <div class="mask-modal hidden" id="maskModal" role="dialog" aria-modal="true" aria-labelledby="maskModalTitle">
+      <div class="mask-modal-backdrop" data-mask-close></div>
+      <section class="mask-modal-panel">
+        <header class="mask-modal-head">
+          <div>
+            <span class="eyebrow">REFERENCE MASK</span>
+            <h2 id="maskModalTitle">蒙版编辑</h2>
+            <p id="maskModalSubtitle">在图片上擦出需要修改的区域</p>
+          </div>
+          <button type="button" class="icon-button" id="closeMaskEditor" aria-label="关闭蒙版编辑">
+            <i data-lucide="x" aria-hidden="true"></i>
+          </button>
+        </header>
+        <div class="mask-modal-body">
+          <aside class="mask-source-rail" id="maskSourceRail" aria-label="参考图列表"></aside>
+          <div class="mask-workspace">
+            <div class="mask-canvas-stage" id="maskCanvasStage">
+              <img id="canvasSource" alt="原图预览" /><canvas id="maskCanvas"></canvas>
+              <span class="brush-cursor" id="brushCursor" aria-hidden="true"></span>
+              <span class="mask-stage-label">擦除区域</span>
+            </div>
+            <div class="canvas-tools">
+              <label>画笔 <input id="brushSize" type="range" min="12" max="180" value="70" /><output id="brushOutput">70 px</output></label>
+              <label class="mask-upload"><i data-lucide="upload" aria-hidden="true"></i>载入蒙版<input id="maskInput" type="file" accept="image/png" /></label>
+              <button type="button" class="text-button" id="resetMask"><i data-lucide="rotate-ccw" aria-hidden="true"></i>重置</button>
+            </div>
+          </div>
+        </div>
+        <footer class="mask-modal-foot">
+          <span id="maskModalStatus">图1 · 未保存蒙版</span>
+          <button type="button" class="primary-button" id="applyMaskEditor"><i data-lucide="check" aria-hidden="true"></i>完成编辑</button>
+        </footer>
+      </section>
+    </div>
+    <div
+      class="image-lightbox hidden"
+      id="imageLightbox"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="lightboxTitle"
+    >
+      <div class="lightbox-backdrop" data-lightbox-close></div>
+      <div class="lightbox-panel">
+        <div class="lightbox-toolbar">
+          <span id="lightboxTitle">图片预览</span>
+          <button type="button" id="closeLightbox" aria-label="关闭图片预览">
+            <i data-lucide="x" aria-hidden="true"></i>
+          </button>
+        </div>
+        <button
+          class="lightbox-nav lightbox-prev"
+          id="lightboxPrev"
+          type="button"
+          aria-label="上一张"
+        >
+          <i data-lucide="chevron-left" aria-hidden="true"></i>
+        </button>
+        <figure class="lightbox-figure">
+          <img id="lightboxImage" alt="" />
+          <figcaption id="lightboxCaption"></figcaption>
+        </figure>
+        <button
+          class="lightbox-nav lightbox-next"
+          id="lightboxNext"
+          type="button"
+          aria-label="下一张"
+        >
+          <i data-lucide="chevron-right" aria-hidden="true"></i>
+        </button>
+      </div>
+    </div>
+    <div class="cursor-dot" aria-hidden="true"></div>
+    <div class="cursor-ring" aria-hidden="true"></div>
+    <script src="/vendor/lucide/lucide.min.js"></script>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
