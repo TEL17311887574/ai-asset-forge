@@ -1,21 +1,79 @@
-import {
-  ACTIVE_IMAGE_MODEL,
-  MAX_SOURCE_FILES,
-  MODEL_SIZE_PRESETS,
-  RESOLUTION_PRESETS,
-  modeContent,
-  modeLabels,
-} from "./modules/studio-config.js";
-import {
-  deleteConversation,
-  getConversations,
-  getLegacyGenerations,
-  putConversation,
-  sortConversations,
-} from "./modules/storage.js";
+const MAX_SOURCE_FILES = 16;
+const DB_NAME = "gpt-image-2-studio";
+const DB_VERSION = 2;
+const CONVERSATION_STORE = "conversations";
+const LEGACY_STORE = "generations";
+// Keep every model/resolution/ratio combination in one place. If GPT Image
+// 2.5 uses different dimensions later, add another model entry here.
+const MODEL_SIZE_PRESETS = Object.freeze({
+  "gpt-image-2": Object.freeze({
+    "1K": Object.freeze({
+      "1:1": "1024x1024", "3:4": "768x1024", "16:9": "1024x576",
+      "4:3": "1024x768", "9:16": "576x1024", "2:3": "688x1024",
+      "3:2": "1024x688", "5:4": "1024x816", "4:5": "816x1024",
+      "21:9": "1024x432",
+    }),
+    "2K": Object.freeze({
+      "1:1": "2048x2048", "3:4": "1536x2048", "16:9": "2048x1152",
+      "4:3": "2048x1536", "9:16": "1152x2048", "2:3": "1360x2048",
+      "3:2": "2048x1360", "5:4": "2048x1632", "4:5": "1632x2048",
+      "21:9": "2048x880",
+    }),
+    "3K": Object.freeze({
+      // 3072x3072 would exceed GPT Image 2's 8,294,400-pixel limit.
+      "1:1": "2880x2880", "3:4": "2304x3072", "16:9": "3072x1728",
+      "4:3": "3072x2304", "9:16": "1728x3072", "2:3": "2048x3072",
+      "3:2": "3072x2048", "5:4": "3072x2464", "4:5": "2464x3072",
+      "21:9": "3072x1312",
+    }),
+    "4K": Object.freeze({
+      "1:1": "2880x2880", "3:4": "2496x3312", "16:9": "3840x2160",
+      "4:3": "3312x2496", "9:16": "2160x3840", "2:3": "2352x3520",
+      "3:2": "3520x2352", "5:4": "3216x2576", "4:5": "2576x3216",
+      "21:9": "3840x1648",
+    }),
+  }),
+});
+const ACTIVE_IMAGE_MODEL = "gpt-image-2";
+const RESOLUTION_PRESETS = Object.freeze({
+  "1K": Object.freeze({ longEdge: 1024, fitToMaxPixels: false }),
+  "2K": Object.freeze({ longEdge: 2048, fitToMaxPixels: false }),
+  "3K": Object.freeze({ longEdge: 3072, fitToMaxPixels: false }),
+  "4K": Object.freeze({ longEdge: 3840, fitToMaxPixels: true }),
+});
+const CHARACTER_TURNAROUND_PROMPT = Object.freeze(
+  `无论参考图中出现何种背景（白色、户外或任何环境），都将其完全替换，并将最终输出渲染为高级工作室肖像双联图，使用纯白无缝背景。白色背景必须在所有面板中完全一致，绝对没有环境元素、阴影或渐变。
 
+生成一张采用非对称两部分布局的单一图像：
+
+- 左面板（约总宽度的 1/3）：同一人物的近景上半身肖像（半身像），取景从头部到中躯干/腰部。人物必须面向镜头，呈严格正面直视视角——眼睛直视镜头，肩膀与画面平面完全平行，面部构图对称，头部无任何旋转或倾斜。姿态自然，展示面部表情、发型和上装细节。
+- 右面板（约总宽度的 2/3）：同一人物的全身三视图正交组，在比例和垂直基线上精确对齐，包含：
+  • 正面视图：从头到脚全身，面向镜头，中性站姿
+  • 侧面视图：标准 90° 纯侧面，全身，自然姿态
+  • 背面视图：后侧全身视图，展示后脑、躯干和腿部，并保持与其他两个视图相同的取景高度和脚部对齐
+
+用一条细竖分隔线分开左、右面板。在右面板内，用另外两条细竖线分隔三个全身视图——所有线条笔直、间距均匀，呈现干净、极简的布局设计。
+
+全程采用统一可控的工作室灯光：柔和但有方向性的主光，自然阴影塑形，真实明暗对比。对于左侧上半身肖像：清晰的眼睛细节、真实皮肤纹理和准确的面料渲染（严禁过度磨皮或喷枪修图）。对于右侧全身视图：三个角度光照逻辑一致，真实布料垂坠感，自然四肢比例，轮廓上的光线衰减准确。所有视图中头发纹理必须保持真实。
+
+人物的身份、面部比例、发型、身体比例、服装和整体造型必须与参考图完全匹配；但是，所有面板的背景必须统一为相同的纯白工作室背景。
+
+严格禁止添加任何文字、水印、标志、字幕、UI 元素、边框、面板标签（A/B/C/1/2/3）、角度标注、测量指南或任何其他形式的附加内容。`,
+);
+const modeContent = {
+  default: "程序会根据是否上传参考图，自动选择文生图或图生图。",
+  mask: "上传原图并擦出蒙版区域，只修改你指定的部分。",
+  characterTurnaround: "需 1 张参考图，生成工作室肖像与全身三视图。",
+};
+const modeLabels = {
+  default: "默认",
+  generate: "文生图",
+  edit: "图生图",
+  mask: "蒙版编辑",
+  characterTurnaround: "角色三视图",
+};
 const state = {
-  mode: "generate",
+  mode: "default",
   sourceFiles: [],
   maskFile: null,
   busy: false,
@@ -72,6 +130,8 @@ const els = {
   settingsButton: $("#settingsButton"),
   settingsPopover: $("#settingsPopover"),
   closeSettings: $("#closeSettings"),
+  modePopover: $("#modePopover"),
+  closeMode: $("#closeMode"),
   modeButton: $("#modeButton"),
   modeLabel: $("#modeLabel"),
   status: $("#toast"),
@@ -117,6 +177,7 @@ const els = {
   confirmAction: $("#confirmAction"),
   composerHint: $("#composerHint"),
 };
+let dbPromise;
 let confirmCallback;
 let confirmNeedsSecondStep = false;
 let toastTimer;
@@ -448,6 +509,81 @@ async function toUploadFile(item, index) {
         type: blob.type || "image/png",
       });
 }
+function openDb() {
+  if (dbPromise) return dbPromise;
+  dbPromise = new Promise((resolve, reject) => {
+    if (!("indexedDB" in window))
+      return reject(
+        new Error("当前浏览器不支持 IndexedDB，本地对话无法保存。"),
+      );
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(CONVERSATION_STORE)) {
+        const conversations = db.createObjectStore(CONVERSATION_STORE, {
+          keyPath: "id",
+        });
+        conversations.createIndex("updatedAt", "updatedAt");
+        conversations.createIndex("pinned", "pinned");
+      }
+      if (!db.objectStoreNames.contains(LEGACY_STORE)) {
+        const generations = db.createObjectStore(LEGACY_STORE, {
+          keyPath: "id",
+        });
+        generations.createIndex("createdAt", "createdAt");
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () =>
+      reject(request.error || new Error("无法打开本地数据库。"));
+  });
+  return dbPromise;
+}
+function idbRequest(request) {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () =>
+      reject(request.error || new Error("本地数据库操作失败。"));
+  });
+}
+async function getConversations() {
+  const db = await openDb();
+  return idbRequest(
+    db
+      .transaction(CONVERSATION_STORE, "readonly")
+      .objectStore(CONVERSATION_STORE)
+      .getAll(),
+  );
+}
+async function putConversation(conversation) {
+  const db = await openDb();
+  return idbRequest(
+    db
+      .transaction(CONVERSATION_STORE, "readwrite")
+      .objectStore(CONVERSATION_STORE)
+      .put(conversation),
+  );
+}
+async function deleteConversationFromDb(id) {
+  const db = await openDb();
+  return idbRequest(
+    db
+      .transaction(CONVERSATION_STORE, "readwrite")
+      .objectStore(CONVERSATION_STORE)
+      .delete(id),
+  );
+}
+async function readLegacyGenerations() {
+  const db = await openDb();
+  return idbRequest(
+    db.transaction(LEGACY_STORE, "readonly").objectStore(LEGACY_STORE).getAll(),
+  );
+}
+function sortConversations(items) {
+  return items.sort(
+    (a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt - a.updatedAt,
+  );
+}
 function titleFromPrompt(prompt) {
   const title = String(prompt || "")
     .replace(/\s+/g, " ")
@@ -596,34 +732,53 @@ function setRatio(ratio) {
   if (state.linkSize || ratio === "original") syncDimensionsFromRatio();
   else updateDimensionPreview();
 }
+function getEffectiveGenerationMode() {
+  if (state.mode === "mask") return "mask";
+  if (state.mode === "characterTurnaround") return "characterTurnaround";
+  return state.sourceFiles.length ? "edit" : "generate";
+}
 function setMode(mode) {
-  if (mode !== "mask" && state.maskEditorOpen) closeMaskEditor();
-  state.mode = mode;
+  const nextMode = ["mask", "characterTurnaround"].includes(mode)
+    ? mode
+    : "default";
+  if (nextMode !== "mask" && state.maskEditorOpen) closeMaskEditor();
+  state.mode = nextMode;
   const originalRatio = document.querySelector('[data-ratio="original"]');
-  originalRatio?.classList.toggle("hidden", mode !== "mask");
-  if (mode !== "mask" && state.ratio === "original") {
+  originalRatio?.classList.toggle("hidden", nextMode !== "mask");
+  if (nextMode !== "mask" && state.ratio === "original") {
     setRatio("1:1");
   }
-  els.modeLabel.textContent = modeLabels[mode];
-  els.fidelityField.classList.toggle("hidden", mode === "generate");
-  els.attachButton.classList.toggle("hidden", mode === "generate");
-  els.prompt.placeholder = modeContent[mode] || modeContent["generate"];
+  els.modeLabel.textContent = modeLabels[nextMode];
+  els.fidelityField.classList.toggle(
+    "hidden",
+    getEffectiveGenerationMode() === "generate",
+  );
   els.maskEditor.classList.toggle(
-      "hidden",
-      mode !== "mask" || !state.sourceFiles.length,
-    );
+    "hidden",
+    nextMode !== "mask" || !state.sourceFiles.length,
+  );
   document.querySelectorAll("[data-mode]").forEach((button) => {
-    button.classList.toggle("active", button.dataset.mode === mode);
+    button.classList.toggle("active", button.dataset.mode === nextMode);
   });
-  if (mode === "mask") updateMaskFromSource();
-  if (mode === "mask" && state.ratio === "original" && state.sourceFiles.length)
+  if (nextMode === "mask") updateMaskFromSource();
+  if (nextMode === "mask" && state.ratio === "original" && state.sourceFiles.length)
     syncDimensionsFromRatio();
   renderAttachments();
 }
 function renderFileMeta() {
+  if (state.mode === "characterTurnaround") {
+    els.sourceMeta.textContent = `${state.sourceFiles.length} / 1 张参考图`;
+    return;
+  }
   els.sourceMeta.textContent = state.sourceFiles.length
     ? `${state.sourceFiles.length} / ${MAX_SOURCE_FILES} 张参考图`
     : `最多 ${MAX_SOURCE_FILES} 张参考图`;
+}
+
+function buildCharacterTurnaroundPrompt(customPrompt) {
+  return [String(customPrompt || "").trim(), CHARACTER_TURNAROUND_PROMPT]
+    .filter(Boolean)
+    .join("\n\n");
 }
 let draggingAttachmentIndex = null;
 
@@ -673,6 +828,10 @@ function reorderSourceFiles(fromIndex, toIndex) {
 function renderAttachments() {
   els.composerAttachments.replaceChildren();
   renderFileMeta();
+  els.fidelityField.classList.toggle(
+    "hidden",
+    getEffectiveGenerationMode() === "generate",
+  );
   state.sourceFiles.forEach((file, index) => {
     const item = document.createElement("div");
     item.className = "attachment-item";
@@ -768,6 +927,11 @@ function renderAttachments() {
 }
 function setSourceFiles(files) {
   const incoming = [...files].filter((file) => file.type.startsWith("image/"));
+  const incomingCount = state.sourceFiles.length + incoming.length;
+  if (state.mode === "characterTurnaround" && incomingCount > 1) {
+    showToast("角色三视图只能保留 1 张参考图，请删除多余图片", "error");
+    return;
+  }
   const slots = Math.max(0, MAX_SOURCE_FILES - state.sourceFiles.length);
   const added = incoming
     .slice(0, slots)
@@ -1129,7 +1293,14 @@ function renderConversationList() {
       document.querySelectorAll(".conversation-menu").forEach((other) => {
         if (other !== menu) other.classList.add("hidden");
       });
+      document
+        .querySelectorAll(".conversation-item.menu-open")
+        .forEach((other) => {
+          if (other !== item) other.classList.remove("menu-open");
+        });
+      const willOpen = menu.classList.contains("hidden");
       menu.classList.toggle("hidden");
+      item.classList.toggle("menu-open", willOpen);
     });
     menu.append(pin, rename, del);
     item.append(leading, title, time, trigger, menu);
@@ -1165,6 +1336,9 @@ function closeAllMenus() {
   document
     .querySelectorAll(".conversation-menu")
     .forEach((menu) => menu.classList.add("hidden"));
+  document
+    .querySelectorAll(".conversation-item.menu-open")
+    .forEach((item) => item.classList.remove("menu-open"));
 }
 
 function initAmbientMotion() {
@@ -1225,14 +1399,14 @@ async function openNewConversation() {
   state.pendingMentions = [];
   state.mentionCursor = -1;
   state.maskFile = null;
-  state.mode = "generate";
+  state.mode = "default";
   setPromptText("");
   els.prompt.dispatchEvent(new Event("input"));
   els.messages.replaceChildren();
   els.welcomeScreen.classList.remove("hidden");
   els.conversationTitle.textContent = "新建对话";
   els.composerWrap.classList.remove("conversation-mode");
-  setMode("generate");
+  setMode("default");
   renderAttachments();
   renderMentionTags();
   renderConversationList();
@@ -1246,10 +1420,10 @@ async function openConversation(id) {
   state.pendingMentions = [];
   state.mentionCursor = -1;
   state.maskFile = null;
-  state.mode = "generate";
+  state.mode = "default";
   setPromptText("");
   els.prompt.dispatchEvent(new Event("input"));
-  setMode("generate");
+  setMode("default");
   renderAttachments();
   renderMentionTags();
   closeMentionPicker();
@@ -1438,7 +1612,9 @@ function getReferences() {
   }));
 }
 function editMessage(message) {
-  state.mode = message.mode || "generate";
+  state.mode = ["mask", "characterTurnaround"].includes(message.mode)
+    ? message.mode
+    : "default";
   state.ratio = message.ratio || "1:1";
   state.resolution = message.resolution || "1K";
   state.quality = message.quality || "medium";
@@ -1492,12 +1668,17 @@ async function submitGeneration() {
   syncPendingMentions();
   const rawPrompt = getPromptText(false).trim();
   if (!rawPrompt) return showToast("请先输入提示词", "error");
-  const effectiveMode =
-    state.mode === "generate" && state.sourceFiles.length ? "edit" : 
-    state.mode === "turnaround" ? "turnaround" : state.mode;
-  if (effectiveMode !== "generate" && !state.sourceFiles.length)
+  const effectiveMode = getEffectiveGenerationMode();
+  if (effectiveMode === "characterTurnaround" && state.sourceFiles.length !== 1)
+    return showToast("角色三视图必须传入 1 张参考图", "error");
+  if ((effectiveMode === "edit" || effectiveMode === "mask") && !state.sourceFiles.length)
     return showToast("请先上传原图", "error");
-  const prompt = getPromptText(true).trim();
+  const prompt = effectiveMode === "characterTurnaround"
+    ? buildCharacterTurnaroundPrompt(rawPrompt)
+    : getPromptText(true).trim();
+  const displayPrompt = effectiveMode === "characterTurnaround"
+    ? rawPrompt
+    : prompt;
   const conversation = ensureConversation(prompt);
   const dimensions = {
     width: Number(state.width) || 1024,
@@ -1521,7 +1702,7 @@ async function submitGeneration() {
   const userMessage = {
     id: uid("user"),
     role: "user",
-    prompt,
+    prompt: displayPrompt,
     createdAt: Date.now(),
   };
   const generation = {
@@ -1567,13 +1748,7 @@ async function submitGeneration() {
         n: settings.count,
       }).forEach(([key, value]) => data.append(key, value));
       if (els.fidelity.checked) data.append("input_fidelity", "high");
-      if (effectiveMode === "turnaround") {
-        // 人物三视图模式：只需要单张原图
-        response = await fetch("/api/character-turnaround", {
-          method: "POST",
-          body: data,
-        });
-      } else if (effectiveMode === "mask") {
+      if (effectiveMode === "mask") {
         // Keep the first mask on the legacy field and expose additional masks
         // as indexed multipart fields for the multi-reference API contract.
         const blob = dataUrlBlob(state.sourceFiles[0]?.maskDataUrl);
@@ -1640,10 +1815,13 @@ els.prompt.addEventListener("input", () => {
 });
 els.prompt.addEventListener("keydown", (event) => {
   if (event.key === "Escape") closeMentionPicker();
-  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-    event.preventDefault();
-    submitGeneration();
-  }
+  if (event.key !== "Enter") return;
+  // 输入法组合态（拼音/日文等）下按 Enter 是选词，不应发送。
+  if (event.isComposing || event.keyCode === 229) return;
+  // Shift+Enter 插入换行，交给浏览器默认行为。
+  if (event.shiftKey) return;
+  event.preventDefault();
+  submitGeneration();
 });
 document.addEventListener("click", (event) => {
   if (
@@ -1659,6 +1837,12 @@ document.addEventListener("click", (event) => {
     !event.target.closest("#settingsButton, #modeButton")
   )
     setSettingsOpen(false);
+  if (
+    !els.modePopover.classList.contains("hidden") &&
+    !els.modePopover.contains(event.target) &&
+    !event.target.closest("#modeButton")
+  )
+    setModePopoverOpen(false);
 });
 document.addEventListener("keydown", (event) => {
   if (!els.authModal.classList.contains("hidden")) {
@@ -1695,6 +1879,7 @@ document.addEventListener("keydown", (event) => {
   closeMentionPicker();
   closeAllMenus();
   setSettingsOpen(false);
+  setModePopoverOpen(false);
   closeMobileHistory();
   if (!els.confirmBackdrop.classList.contains("hidden")) closeConfirm();
 });
@@ -1712,29 +1897,96 @@ document
   );
 document.querySelectorAll("[data-mode]").forEach((button) =>
   button.addEventListener("click", () => {
+    if (
+      button.dataset.mode === "characterTurnaround" &&
+      state.sourceFiles.length > 1
+    ) {
+      const firstImage = state.sourceFiles[0];
+      state.sourceFiles = [firstImage];
+      els.prompt.querySelectorAll(".inline-mention").forEach((mention) => {
+        const mentionIndex = Number(mention.dataset.index);
+        if (mentionIndex === 0) updateInlineMention(mention, 0);
+        else mention.remove();
+      });
+      syncPendingMentions();
+      renderMentionTags();
+      showToast("已为角色三视图保留第一张参考图");
+    }
     setMode(button.dataset.mode);
-    if (button.closest(".mode-segment"))
-      setSettingsOpen(false);
+    if (button.closest(".mode-options"))
+      setModePopoverOpen(false);
   }),
 );
-els.settingsButton.addEventListener("click", () =>
-  toggleSettingsPopover(),
-);
+els.settingsButton.addEventListener("click", () => {
+  setModePopoverOpen(false);
+  toggleSettingsPopover();
+});
 els.closeSettings.addEventListener("click", () =>
   setSettingsOpen(false),
 );
+els.closeMode?.addEventListener("click", () =>
+  setModePopoverOpen(false),
+);
 els.modeButton.addEventListener("click", () => {
-  setSettingsOpen(true);
-  els.settingsPopover.scrollIntoView({ block: "nearest" });
+  setSettingsOpen(false);
+  toggleModePopover();
 });
 function setSettingsOpen(open) {
   els.settingsPopover.classList.toggle("hidden", !open);
   els.settingsButton.setAttribute("aria-expanded", String(open));
-  els.modeButton.setAttribute("aria-expanded", String(open));
+  if (open) positionSettingsPopover();
 }
 function toggleSettingsPopover() {
   setSettingsOpen(els.settingsPopover.classList.contains("hidden"));
 }
+function positionSettingsPopover() {
+  const rect = els.settingsButton.getBoundingClientRect();
+  const popup = els.settingsPopover;
+  popup.style.left = "0px";
+  popup.style.top = "0px";
+  popup.style.right = "auto";
+  popup.style.bottom = "auto";
+  popup.style.visibility = "hidden";
+  popup.style.maxHeight = "";
+  popup.style.height = "";
+  popup.classList.remove("hidden");
+  const popupRect = popup.getBoundingClientRect();
+  let left = rect.left;
+  const maxLeft = window.innerWidth - popupRect.width - 10;
+  left = Math.max(10, Math.min(left, maxLeft));
+  let top = rect.top - popupRect.height - 10;
+  if (top < 10) top = rect.bottom + 10;
+  popup.style.left = left + "px";
+  popup.style.top = top + "px";
+  popup.style.visibility = "";
+}
+function setModePopoverOpen(open) {
+  els.modePopover.classList.toggle("hidden", !open);
+  els.modeButton.setAttribute("aria-expanded", String(open));
+  if (open) positionModePopover();
+}
+function positionModePopover() {
+  const rect = els.modeButton.getBoundingClientRect();
+  const popup = els.modePopover;
+  popup.style.visibility = "hidden";
+  popup.classList.remove("hidden");
+  const popupRect = popup.getBoundingClientRect();
+  let left = rect.left;
+  const maxLeft = window.innerWidth - popupRect.width - 10;
+  left = Math.max(10, Math.min(left, maxLeft));
+  let top = rect.top - popupRect.height - 10;
+  if (top < 10) top = rect.bottom + 10;
+  popup.style.left = left + "px";
+  popup.style.top = top + "px";
+  popup.style.visibility = "";
+}
+function toggleModePopover() {
+  setModePopoverOpen(els.modePopover.classList.contains("hidden"));
+}
+window.addEventListener("resize", () => {
+  if (!els.modePopover.classList.contains("hidden")) positionModePopover();
+  if (!els.settingsPopover.classList.contains("hidden")) positionSettingsPopover();
+});
 els.resolution.addEventListener("change", () => {
   state.resolution = els.resolution.value;
   if (state.linkSize) syncDimensionsFromRatio();
@@ -1923,7 +2175,7 @@ async function init() {
   try {
     state.conversations = sortConversations(await getConversations());
     if (!state.conversations.length) {
-      const legacy = await getLegacyGenerations();
+      const legacy = await readLegacyGenerations();
       if (legacy.length) {
         const conversation = createConversation();
         const sorted = legacy.sort((a, b) => b.createdAt - a.createdAt);

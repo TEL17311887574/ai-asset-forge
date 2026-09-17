@@ -1,103 +1,101 @@
 """图片生成与编辑接口。"""
 
-from fastapi import APIRouter, File, Form, Request, UploadFile
+from typing import Annotated, List, Optional, Union
+
+from fastapi import APIRouter, Form, HTTPException, Request, UploadFile
+from fastapi.responses import JSONResponse
+from loguru import logger
 
 from auth.session import create_openai_client
 from image.schema import GenerateRequest
 from image.service import (
     clean_prompt,
     edit_image,
-    generate_character_turnaround,
     generate_image,
+    get_error_message,
     read_image_files,
-    generate_character_turnaround,validate_size,
+    safe_count,
+    safe_input_fidelity,
+    safe_quality,
+    safe_size,
 )
 
 
 router = APIRouter()
 
 
+def error_response(exc: Exception, context: str) -> JSONResponse:
+    """将接口内部异常统一转换为 JSON 错误响应，并写入服务端日志。
+
+    HTTPException 保留原始状态码与 detail（例如 400/401/413）；
+    其余异常一律按 500 处理，同时记录完整堆栈，便于通过日志定位。
+    """
+    if isinstance(exc, HTTPException):
+        logger.warning("[{}] HTTP {}: {}", context, exc.status_code, exc.detail)
+        return JSONResponse(
+            {"error": exc.detail},
+            status_code=exc.status_code,
+        )
+
+    logger.opt(exception=exc).error("[{}] 未处理异常: {}", context, exc)
+    return JSONResponse(
+        {
+            "error": get_error_message(exc) or "服务器内部错误，请查看服务端日志。",
+            "type": type(exc).__name__,
+        },
+        status_code=getattr(exc, "status_code", None) or 500,
+    )
+
+
 @router.post("/generate")
 async def generate(request: Request, payload: GenerateRequest):
     """文生图接口：根据提示词生成新图片。"""
-    validate_size(payload.size)
-    client = create_openai_client(request)
-    b64_image = generate_image(
-        client=client,
-        prompt=clean_prompt(payload.prompt),
-        size=payload.size,
-    )
-    return {"image": b64_image}
+    try:
+        client = create_openai_client(request)
+        prompt = clean_prompt(payload.prompt)
+        size = safe_size(payload.size)
+        quality = safe_quality(payload.quality)
+        count = safe_count(payload.n)
+
+        images = generate_image(
+            client=client,
+            prompt=prompt,
+            size=size,
+            quality=quality,
+            n=count,
+        )
+        return {"images": images}
+    except Exception as exc:  # noqa: BLE001 - 统一兜底为 JSON 响应
+        return error_response(exc, "generate")
 
 
 @router.post("/edit")
 async def edit(
     request: Request,
-    prompt: str = Form(...),
-    size: str = Form("1024x1024"),
-    images: list[UploadFile] = File(...),
+    images: Annotated[List[UploadFile], Form(alias="image")],
+    prompt: Annotated[str, Form()],
+    size: Annotated[str, Form()] = "1024x1024",
+    quality: Annotated[str, Form()] = "medium",
+    n: Annotated[Union[int, str], Form()] = 1,
+    input_fidelity: Annotated[str, Form()] = "low",
+    mask: Annotated[Optional[UploadFile], Form()] = None,
 ):
     """图生图接口：基于原图和提示词进行编辑或变体生成。"""
-    validate_size(size)
-    client = create_openai_client(request)
-    image_data = await read_image_files(images)
-    b64_image = edit_image(
-        client=client,
-        prompt=clean_prompt(prompt),
-        images=image_data,
-        size=size,
-    )
-    return {"image": b64_image}
+    try:
+        client = create_openai_client(request)
+        image_data = await read_image_files(images)
 
-
-@router.post("/character-turnaround")
-async def character_turnaround(
-    request: Request,
-    image: UploadFile = File(...),
-    custom_prompt: str = Form(""),
-    size: str = Form("1792x1024"),
-):
-    """人物面部三视图生成接口：基于原图生成三视图 + 上半身特写。
-    
-    默认使用预设的三视图提示词模板，用户可通过 custom_prompt 追加补充要求。
-    推荐尺寸 1792x1024（横向），适合左右分栏布局。
-    """
-    validate_size(size)
-    client = create_openai_client(request)
-    image_data = (await read_image_files([image]))[0]
-    
-    b64_image = generate_character_turnaround(
-        client=client,
-        source_image=image_data,
-        custom_prompt=custom_prompt,
-        size=size,
-    )
-    return {"image": b64_image}
-
-@router.post("/character-turnaround")
-async def character_turnaround(
-    request: Request,
-    prompt: str = Form(""),
-    size: str = Form("1792x1024"),
-    quality: str = Form("standard"),
-    images: list[UploadFile] = File(...),
-):
-    """人物面部三视图生成接口：基于原图生成三视图 + 上半身特写。
-    
-    默认使用预设的三视图提示词模板，用户可通过 prompt 追加补充要求。
-    推荐尺寸 1792x1024（横向），适合左右分栏布局。
-    """
-    validate_size(size)
-    client = create_openai_client(request)
-    
-    # 只取第一张图片
-    image_data = (await read_image_files(images))[0]
-    
-    b64_image = generate_character_turnaround(
-        client=client,
-        source_image=image_data,
-        custom_prompt=prompt,
-        size=size,
-        quality=quality,
-    )
-    return {"image": b64_image}
+        mask_data = await mask.read() if mask else None
+        images_result = edit_image(
+            client=client,
+            prompt=clean_prompt(prompt),
+            images=image_data,
+            size=safe_size(size),
+            quality=safe_quality(quality),
+            input_fidelity=safe_input_fidelity(input_fidelity),
+            n=safe_count(n),
+            mask=mask_data,
+        )
+        return {"images": images_result}
+    except Exception as exc:  # noqa: BLE001 - 统一兜底为 JSON 响应
+        return error_response(exc, "edit")

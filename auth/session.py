@@ -1,10 +1,9 @@
 """加密 Cookie 会话。"""
 
-from __future__ import annotations
-
 import base64
 import secrets
 from pathlib import Path
+from typing import Dict, Optional
 
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import HTTPException, Request, Response
@@ -15,7 +14,7 @@ from config_default import REQUEST_TIMEOUT, SESSION_MAX_AGE
 
 # 会话加密密钥文件（首次启动自动生成）
 _SECRET_PATH = Path(".auth-secret")
-_cipher: Fernet | None = None
+_cipher: Optional[Fernet] = None
 
 
 def _get_cipher() -> Fernet:
@@ -41,7 +40,7 @@ def encode_session(api_key: str, base_url: str) -> str:
     return _get_cipher().encrypt(payload).decode("ascii")
 
 
-def decode_session(token: str | None) -> dict | None:
+def decode_session(token: Optional[str]) -> Optional[Dict[str, str]]:
     """解密会话 Token，返回字典或 None。"""
     if not token:
         return None
@@ -55,7 +54,7 @@ def decode_session(token: str | None) -> dict | None:
     return None
 
 
-def get_session(request: Request) -> dict | None:
+def get_session(request: Request) -> Optional[Dict[str, str]]:
     """从请求 Cookie 中读取并解密会话。"""
     return decode_session(request.cookies.get("inx_session"))
 

@@ -156,9 +156,9 @@
             </div>
             <div class="composer-toolbar">
               <div class="toolbar-left">
-                <button class="tool-pill" id="modeButton" type="button" aria-controls="settingsPopover" aria-expanded="false">
+                <button class="tool-pill" id="modeButton" type="button" aria-controls="modePopover" aria-expanded="false">
                   <span class="tool-icon"><i data-lucide="image" aria-hidden="true"></i></span
-                  ><span id="modeLabel">图片生成</span
+                  ><span id="modeLabel">默认</span
                   ><span class="chevron"><i data-lucide="chevron-down" aria-hidden="true"></i></span></button
                 ><button class="tool-pill" id="settingsButton" type="button" aria-controls="settingsPopover" aria-expanded="false">
                   <span class="tool-icon"><i data-lucide="sliders-horizontal" aria-hidden="true"></i></span><span>参数</span></button
@@ -168,24 +168,225 @@
               </div>
               <div class="toolbar-right">
                 <span id="promptCount">0 / 4000</span
-                ><span class="shortcut-hint">⌘ ↵ 发送</span>
+                ><span class="shortcut-hint">↵ 发送 · ⇧↵ 换行</span>
               </div>
             </div>
-            <div class="settings-popover hidden" id="settingsPopover">
+          </form>
+        </div>
+      </main>
+    </div>
+
+    <button class="sidebar-scrim hidden" id="sidebarScrim" type="button" aria-label="关闭对话记录"></button>
+    <div class="confirm-backdrop hidden" id="confirmBackdrop">
+      <div
+        class="confirm-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirmTitle"
+      >
+        <div class="confirm-icon"><i data-lucide="triangle-alert" aria-hidden="true"></i></div>
+        <h2 id="confirmTitle">确认操作</h2>
+        <p id="confirmText"></p>
+        <div class="confirm-actions">
+          <button type="button" class="cancel-button" id="cancelConfirm">
+            取消</button
+          ><button type="button" class="danger-button" id="confirmAction">
+            确认
+          </button>
+        </div>
+      </div>
+    </div>
+    <div class="toast hidden" id="toast" role="status"></div>
+    <div class="auth-modal hidden" id="authModal" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+      <div class="auth-modal-backdrop" data-auth-close></div>
+      <section class="auth-panel">
+        <aside class="auth-visual" aria-hidden="true">
+          <img src="https://images.unsplash.com/photo-1518005020951-eccb494ad742?auto=format&fit=crop&w=1200&q=88" alt="" loading="lazy" decoding="async" />
+          <div class="auth-visual-shade"></div>
+          <div class="auth-visual-top"><span>01 / PRIVATE ACCESS</span><i></i></div>
+          <div class="auth-visual-copy">
+            <span>SECURE CREATIVE SESSION</span>
+            <strong>Ideas stay<br />in your hands.</strong>
+            <small>ENCRYPTED · LOCAL HISTORY</small>
+          </div>
+        </aside>
+        <div class="auth-content">
+          <header class="auth-panel-head">
+            <div>
+              <span class="eyebrow">PRIVATE API SESSION</span>
+              <h2 id="authTitle">登录工作台</h2>
+              <p id="authSubtitle">连接你的 INX API，继续这段创作会话。</p>
+            </div>
+            <button type="button" class="icon-button" id="closeAuth" aria-label="关闭登录窗口">
+              <i data-lucide="x" aria-hidden="true"></i>
+            </button>
+          </header>
+          <form class="auth-form" id="authForm">
+            <label for="authApiKey">
+              <span>INX_TOKEN_API_KEY</span>
+            </label>
+            <div class="auth-input-shell">
+              <i data-lucide="key-round" aria-hidden="true"></i>
+              <input id="authApiKey" name="apiKey" type="password" autocomplete="off" required placeholder="输入 API Key" />
+              <button type="button" class="auth-key-toggle" id="authKeyToggle" aria-label="显示 API Key" aria-pressed="false" title="显示 API Key">
+                <i data-lucide="eye" aria-hidden="true"></i>
+              </button>
+            </div>
+            <label for="authBaseURL">
+              <span>INX_TOKEN_BASE_URL</span>
+            </label>
+            <div class="auth-input-shell">
+              <i data-lucide="globe-2" aria-hidden="true"></i>
+              <input id="authBaseURL" name="baseURL" type="url" required value="https://xfastapi.ai/v1" placeholder="https://.../v1" />
+            </div>
+            <p class="auth-security-note"><i data-lucide="shield-check" aria-hidden="true"></i><span>凭据经加密后用于当前服务端会话，历史对话仍保存在本机。</span></p>
+            <button type="submit" class="primary-button auth-submit" id="authSubmit"><span>进入工作台</span><i data-lucide="arrow-up-right" aria-hidden="true"></i></button>
+            <div class="auth-session-meta" aria-label="会话安全信息"><span>30 DAYS</span><i></i><span>HTTPONLY</span><i></i><span>ENCRYPTED</span></div>
+          </form>
+        </div>
+      </section>
+    </div>
+    <div class="mask-modal hidden" id="maskModal" role="dialog" aria-modal="true" aria-labelledby="maskModalTitle">
+      <div class="mask-modal-backdrop" data-mask-close></div>
+      <section class="mask-modal-panel">
+        <header class="mask-modal-head">
+          <div>
+            <span class="eyebrow">REFERENCE MASK</span>
+            <h2 id="maskModalTitle">蒙版编辑</h2>
+            <p id="maskModalSubtitle">在图片上擦出需要修改的区域</p>
+          </div>
+          <button type="button" class="icon-button" id="closeMaskEditor" aria-label="关闭蒙版编辑">
+            <i data-lucide="x" aria-hidden="true"></i>
+          </button>
+        </header>
+        <div class="mask-modal-body">
+          <aside class="mask-source-rail" id="maskSourceRail" aria-label="参考图列表"></aside>
+          <div class="mask-workspace">
+            <div class="mask-canvas-stage" id="maskCanvasStage">
+              <img id="canvasSource" alt="原图预览" /><canvas id="maskCanvas"></canvas>
+              <span class="brush-cursor" id="brushCursor" aria-hidden="true"></span>
+              <span class="mask-stage-label">擦除区域</span>
+            </div>
+            <div class="canvas-tools">
+              <label>画笔 <input id="brushSize" type="range" min="12" max="180" value="70" /><output id="brushOutput">70 px</output></label>
+              <label class="mask-upload"><i data-lucide="upload" aria-hidden="true"></i>载入蒙版<input id="maskInput" type="file" accept="image/png" /></label>
+              <button type="button" class="text-button" id="resetMask"><i data-lucide="rotate-ccw" aria-hidden="true"></i>重置</button>
+            </div>
+          </div>
+        </div>
+        <footer class="mask-modal-foot">
+          <span id="maskModalStatus">图1 · 未保存蒙版</span>
+          <button type="button" class="primary-button" id="applyMaskEditor"><i data-lucide="check" aria-hidden="true"></i>完成编辑</button>
+        </footer>
+      </section>
+    </div>
+    <div
+      class="image-lightbox hidden"
+      id="imageLightbox"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="lightboxTitle"
+    >
+      <div class="lightbox-backdrop" data-lightbox-close></div>
+      <div class="lightbox-panel">
+        <div class="lightbox-toolbar">
+          <span id="lightboxTitle">图片预览</span>
+          <button type="button" id="closeLightbox" aria-label="关闭图片预览">
+            <i data-lucide="x" aria-hidden="true"></i>
+          </button>
+        </div>
+        <button
+          class="lightbox-nav lightbox-prev"
+          id="lightboxPrev"
+          type="button"
+          aria-label="上一张"
+        >
+          <i data-lucide="chevron-left" aria-hidden="true"></i>
+        </button>
+        <figure class="lightbox-figure">
+          <img id="lightboxImage" alt="" />
+          <figcaption id="lightboxCaption"></figcaption>
+        </figure>
+        <button
+          class="lightbox-nav lightbox-next"
+          id="lightboxNext"
+          type="button"
+          aria-label="下一张"
+        >
+          <i data-lucide="chevron-right" aria-hidden="true"></i>
+        </button>
+      </div>
+    </div>
+    <div class="cursor-dot" aria-hidden="true"></div>
+    <div class="cursor-ring" aria-hidden="true"></div>
+    <script src="/vendor/lucide/lucide.min.js"></script>
+    <script type="module" src="/app.js"></script>
+      <div
+      class="mode-popover hidden"
+      id="modePopover"
+      role="group"
+      aria-labelledby="modePopoverTitle"
+    >
+      <div class="popover-title">
+        <span id="modePopoverTitle">生成模式</span>
+        <button type="button" class="close-popover" id="closeMode" aria-label="关闭生成模式">
+          <i data-lucide="x" aria-hidden="true"></i>
+        </button>
+      </div>
+      <p class="mode-popover-desc">
+        默认模式会根据是否上传参考图，自动选择文生图或图生图；角色三视图需 1 张参考图。
+      </p>
+      <div class="mode-options" aria-label="模式选项">
+        <button type="button" class="mode-option active" data-mode="default">
+          <span class="mode-option-icon" aria-hidden="true">
+            <i data-lucide="sparkles"></i>
+          </span>
+          <span class="mode-option-copy">
+            <span class="mode-option-title">默认</span>
+            <span class="mode-option-desc">自动识别文生图 / 图生图</span>
+          </span>
+          <span class="mode-option-state" aria-hidden="true">
+            <i data-lucide="check"></i>
+          </span>
+        </button>
+        <button type="button" class="mode-option" data-mode="mask">
+          <span class="mode-option-icon" aria-hidden="true">
+            <i data-lucide="scan-line"></i>
+          </span>
+          <span class="mode-option-copy">
+            <span class="mode-option-title">蒙版</span>
+            <span class="mode-option-desc">仅修改擦除的指定区域</span>
+          </span>
+          <span class="mode-option-state" aria-hidden="true">
+            <i data-lucide="check"></i>
+          </span>
+        </button>
+        <button type="button" class="mode-option" data-mode="characterTurnaround">
+          <span class="mode-option-icon" aria-hidden="true">
+            <i data-lucide="user-round-cog"></i>
+          </span>
+          <span class="mode-option-copy">
+            <span class="mode-option-title">角色三视图</span>
+            <span class="mode-option-desc">需 1 张参考图生成三视图</span>
+          </span>
+          <span class="mode-option-state" aria-hidden="true">
+            <i data-lucide="circle"></i>
+          </span>
+        </button>
+      </div>
+      <div class="mode-popover-glow" aria-hidden="true"></div>
+    </div>
+<div
+      class="settings-popover hidden"
+      id="settingsPopover"
+      role="group"
+      aria-labelledby="settingsPopoverTitle"
+    >
               <div class="popover-title">
-                <span>生成参数</span
-                ><button type="button" class="close-popover" id="closeSettings">
+                <span id="settingsPopoverTitle">生成参数</span
+                ><button type="button" class="close-popover" id="closeSettings" aria-label="关闭生成参数">
                   <i data-lucide="x" aria-hidden="true"></i>
                 </button>
-              </div>
-              <div class="setting-group">
-                <span class="setting-label">生成模式</span>
-                <div class="segmented mode-segment">
-                  <button type="button" data-mode="generate" class="active">
-                    文生图</button
-                  ><button type="button" data-mode="edit">图生图</button
-                  ><button type="button" data-mode="mask">蒙版</button>><button type="button" data-mode="turnaround">人物三视图</button
-                </div>
               </div>
               <div class="setting-group">
                 <span class="setting-label">画面比例</span>
@@ -351,155 +552,5 @@
                 高保真保留人物与构图</label
               >
             </div>
-          </form>
-        </div>
-      </main>
-    </div>
-
-    <button class="sidebar-scrim hidden" id="sidebarScrim" type="button" aria-label="关闭对话记录"></button>
-    <div class="confirm-backdrop hidden" id="confirmBackdrop">
-      <div
-        class="confirm-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="confirmTitle"
-      >
-        <div class="confirm-icon"><i data-lucide="triangle-alert" aria-hidden="true"></i></div>
-        <h2 id="confirmTitle">确认操作</h2>
-        <p id="confirmText"></p>
-        <div class="confirm-actions">
-          <button type="button" class="cancel-button" id="cancelConfirm">
-            取消</button
-          ><button type="button" class="danger-button" id="confirmAction">
-            确认
-          </button>
-        </div>
-      </div>
-    </div>
-    <div class="toast hidden" id="toast" role="status"></div>
-    <div class="auth-modal hidden" id="authModal" role="dialog" aria-modal="true" aria-labelledby="authTitle">
-      <div class="auth-modal-backdrop" data-auth-close></div>
-      <section class="auth-panel">
-        <aside class="auth-visual" aria-hidden="true">
-          <img src="https://images.unsplash.com/photo-1518005020951-eccb494ad742?auto=format&fit=crop&w=1200&q=88" alt="" loading="lazy" decoding="async" />
-          <div class="auth-visual-shade"></div>
-          <div class="auth-visual-top"><span>01 / PRIVATE ACCESS</span><i></i></div>
-          <div class="auth-visual-copy">
-            <span>SECURE CREATIVE SESSION</span>
-            <strong>Ideas stay<br />in your hands.</strong>
-            <small>ENCRYPTED · LOCAL HISTORY</small>
-          </div>
-        </aside>
-        <div class="auth-content">
-          <header class="auth-panel-head">
-            <div>
-              <span class="eyebrow">PRIVATE API SESSION</span>
-              <h2 id="authTitle">登录工作台</h2>
-              <p id="authSubtitle">连接你的 INX API，继续这段创作会话。</p>
-            </div>
-            <button type="button" class="icon-button" id="closeAuth" aria-label="关闭登录窗口">
-              <i data-lucide="x" aria-hidden="true"></i>
-            </button>
-          </header>
-          <form class="auth-form" id="authForm">
-            <label for="authApiKey">
-              <span>INX_TOKEN_API_KEY</span>
-            </label>
-            <div class="auth-input-shell">
-              <i data-lucide="key-round" aria-hidden="true"></i>
-              <input id="authApiKey" name="apiKey" type="password" autocomplete="off" required placeholder="输入 API Key" />
-              <button type="button" class="auth-key-toggle" id="authKeyToggle" aria-label="显示 API Key" aria-pressed="false" title="显示 API Key">
-                <i data-lucide="eye" aria-hidden="true"></i>
-              </button>
-            </div>
-            <label for="authBaseURL">
-              <span>INX_TOKEN_BASE_URL</span>
-            </label>
-            <div class="auth-input-shell">
-              <i data-lucide="globe-2" aria-hidden="true"></i>
-              <input id="authBaseURL" name="baseURL" type="url" required value="https://xfastapi.ai/v1" placeholder="https://.../v1" />
-            </div>
-            <p class="auth-security-note"><i data-lucide="shield-check" aria-hidden="true"></i><span>凭据经加密后用于当前服务端会话，历史对话仍保存在本机。</span></p>
-            <button type="submit" class="primary-button auth-submit" id="authSubmit"><span>进入工作台</span><i data-lucide="arrow-up-right" aria-hidden="true"></i></button>
-            <div class="auth-session-meta" aria-label="会话安全信息"><span>30 DAYS</span><i></i><span>HTTPONLY</span><i></i><span>ENCRYPTED</span></div>
-          </form>
-        </div>
-      </section>
-    </div>
-    <div class="mask-modal hidden" id="maskModal" role="dialog" aria-modal="true" aria-labelledby="maskModalTitle">
-      <div class="mask-modal-backdrop" data-mask-close></div>
-      <section class="mask-modal-panel">
-        <header class="mask-modal-head">
-          <div>
-            <span class="eyebrow">REFERENCE MASK</span>
-            <h2 id="maskModalTitle">蒙版编辑</h2>
-            <p id="maskModalSubtitle">在图片上擦出需要修改的区域</p>
-          </div>
-          <button type="button" class="icon-button" id="closeMaskEditor" aria-label="关闭蒙版编辑">
-            <i data-lucide="x" aria-hidden="true"></i>
-          </button>
-        </header>
-        <div class="mask-modal-body">
-          <aside class="mask-source-rail" id="maskSourceRail" aria-label="参考图列表"></aside>
-          <div class="mask-workspace">
-            <div class="mask-canvas-stage" id="maskCanvasStage">
-              <img id="canvasSource" alt="原图预览" /><canvas id="maskCanvas"></canvas>
-              <span class="brush-cursor" id="brushCursor" aria-hidden="true"></span>
-              <span class="mask-stage-label">擦除区域</span>
-            </div>
-            <div class="canvas-tools">
-              <label>画笔 <input id="brushSize" type="range" min="12" max="180" value="70" /><output id="brushOutput">70 px</output></label>
-              <label class="mask-upload"><i data-lucide="upload" aria-hidden="true"></i>载入蒙版<input id="maskInput" type="file" accept="image/png" /></label>
-              <button type="button" class="text-button" id="resetMask"><i data-lucide="rotate-ccw" aria-hidden="true"></i>重置</button>
-            </div>
-          </div>
-        </div>
-        <footer class="mask-modal-foot">
-          <span id="maskModalStatus">图1 · 未保存蒙版</span>
-          <button type="button" class="primary-button" id="applyMaskEditor"><i data-lucide="check" aria-hidden="true"></i>完成编辑</button>
-        </footer>
-      </section>
-    </div>
-    <div
-      class="image-lightbox hidden"
-      id="imageLightbox"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="lightboxTitle"
-    >
-      <div class="lightbox-backdrop" data-lightbox-close></div>
-      <div class="lightbox-panel">
-        <div class="lightbox-toolbar">
-          <span id="lightboxTitle">图片预览</span>
-          <button type="button" id="closeLightbox" aria-label="关闭图片预览">
-            <i data-lucide="x" aria-hidden="true"></i>
-          </button>
-        </div>
-        <button
-          class="lightbox-nav lightbox-prev"
-          id="lightboxPrev"
-          type="button"
-          aria-label="上一张"
-        >
-          <i data-lucide="chevron-left" aria-hidden="true"></i>
-        </button>
-        <figure class="lightbox-figure">
-          <img id="lightboxImage" alt="" />
-          <figcaption id="lightboxCaption"></figcaption>
-        </figure>
-        <button
-          class="lightbox-nav lightbox-next"
-          id="lightboxNext"
-          type="button"
-          aria-label="下一张"
-        >
-          <i data-lucide="chevron-right" aria-hidden="true"></i>
-        </button>
-      </div>
-    </div>
-    <div class="cursor-dot" aria-hidden="true"></div>
-    <div class="cursor-ring" aria-hidden="true"></div>
-    <script src="/vendor/lucide/lucide.min.js"></script>
-    <script type="module" src="/app.js"></script>
-  </body>
+    </body>
 </html>
