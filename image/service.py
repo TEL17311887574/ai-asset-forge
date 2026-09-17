@@ -12,6 +12,7 @@ from config import (
     MAX_PROMPT_LENGTH,
     MAX_SOURCE_FILES,
     MODEL,
+    PROMPTS_DIR,
 )
 
 
@@ -26,6 +27,30 @@ def clean_prompt(text: str) -> str:
         )
     return text.strip()
 
+
+# 预设提示词模板在 prompts/ 目录下维护，后端是唯一事实来源。
+_TURNAROUND_TEMPLATE = "character_turnaround.txt"
+
+
+def load_prompt_template(filename: str) -> str:
+    """从 prompts/ 目录读取预设提示词模板。"""
+    path = PROMPTS_DIR / filename
+    if not path.exists():
+        raise HTTPException(
+            status_code=500,
+            detail=f"提示词模板缺失: {filename}",
+        )
+    return path.read_text(encoding="utf-8").strip()
+
+
+def build_character_turnaround_prompt(user_prompt: str) -> str:
+    """把用户补充描述与角色三视图模板拼接为最终提示词。
+
+    模板本身较长且固定，放在后端统一维护；前端只负责传用户自己的描述，
+    这样模板变更无需改动前端代码。
+    """
+    parts = [user_prompt.strip(), load_prompt_template(_TURNAROUND_TEMPLATE)]
+    return "\n\n".join(part for part in parts if part)
 
 def safe_size(value: Optional[str]) -> str:
     """校验 GPT Image 2 自定义尺寸。"""

@@ -9,6 +9,7 @@ from loguru import logger
 from auth.session import create_openai_client
 from image.schema import GenerateRequest
 from image.service import (
+    build_character_turnaround_prompt,
     clean_prompt,
     edit_image,
     generate_image,
@@ -77,18 +78,29 @@ async def edit(
     size: Annotated[str, Form()] = "1024x1024",
     quality: Annotated[str, Form()] = "medium",
     n: Annotated[Union[int, str], Form()] = 1,
+    mode: Annotated[str, Form()] = "edit",
     input_fidelity: Annotated[str, Form()] = "low",
     mask: Annotated[Optional[UploadFile], Form()] = None,
 ):
-    """图生图接口：基于原图和提示词进行编辑或变体生成。"""
+    """图生图接口：基于原图和提示词进行编辑、蒙版或角色三视图生成。
+
+    当 ``mode="characterTurnaround"`` 时，后端会自动把 prompts/ 目录下的
+    角色三视图模板与用户输入拼接，前端只需提交用户自己的描述。
+    """
     try:
         client = create_openai_client(request)
         image_data = await read_image_files(images)
 
+        final_prompt = (
+            build_character_turnaround_prompt(prompt)
+            if mode == "characterTurnaround"
+            else clean_prompt(prompt)
+        )
+
         mask_data = await mask.read() if mask else None
         images_result = edit_image(
             client=client,
-            prompt=clean_prompt(prompt),
+            prompt=final_prompt,
             images=image_data,
             size=safe_size(size),
             quality=safe_quality(quality),

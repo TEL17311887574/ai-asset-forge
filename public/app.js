@@ -41,25 +41,6 @@ const RESOLUTION_PRESETS = Object.freeze({
   "3K": Object.freeze({ longEdge: 3072, fitToMaxPixels: false }),
   "4K": Object.freeze({ longEdge: 3840, fitToMaxPixels: true }),
 });
-const CHARACTER_TURNAROUND_PROMPT = Object.freeze(
-  `无论参考图中出现何种背景（白色、户外或任何环境），都将其完全替换，并将最终输出渲染为高级工作室肖像双联图，使用纯白无缝背景。白色背景必须在所有面板中完全一致，绝对没有环境元素、阴影或渐变。
-
-生成一张采用非对称两部分布局的单一图像：
-
-- 左面板（约总宽度的 1/3）：同一人物的近景上半身肖像（半身像），取景从头部到中躯干/腰部。人物必须面向镜头，呈严格正面直视视角——眼睛直视镜头，肩膀与画面平面完全平行，面部构图对称，头部无任何旋转或倾斜。姿态自然，展示面部表情、发型和上装细节。
-- 右面板（约总宽度的 2/3）：同一人物的全身三视图正交组，在比例和垂直基线上精确对齐，包含：
-  • 正面视图：从头到脚全身，面向镜头，中性站姿
-  • 侧面视图：标准 90° 纯侧面，全身，自然姿态
-  • 背面视图：后侧全身视图，展示后脑、躯干和腿部，并保持与其他两个视图相同的取景高度和脚部对齐
-
-用一条细竖分隔线分开左、右面板。在右面板内，用另外两条细竖线分隔三个全身视图——所有线条笔直、间距均匀，呈现干净、极简的布局设计。
-
-全程采用统一可控的工作室灯光：柔和但有方向性的主光，自然阴影塑形，真实明暗对比。对于左侧上半身肖像：清晰的眼睛细节、真实皮肤纹理和准确的面料渲染（严禁过度磨皮或喷枪修图）。对于右侧全身视图：三个角度光照逻辑一致，真实布料垂坠感，自然四肢比例，轮廓上的光线衰减准确。所有视图中头发纹理必须保持真实。
-
-人物的身份、面部比例、发型、身体比例、服装和整体造型必须与参考图完全匹配；但是，所有面板的背景必须统一为相同的纯白工作室背景。
-
-严格禁止添加任何文字、水印、标志、字幕、UI 元素、边框、面板标签（A/B/C/1/2/3）、角度标注、测量指南或任何其他形式的附加内容。`,
-);
 const modeContent = {
   default: "程序会根据是否上传参考图，自动选择文生图或图生图。",
   mask: "上传原图并擦出蒙版区域，只修改你指定的部分。",
@@ -775,11 +756,7 @@ function renderFileMeta() {
     : `最多 ${MAX_SOURCE_FILES} 张参考图`;
 }
 
-function buildCharacterTurnaroundPrompt(customPrompt) {
-  return [String(customPrompt || "").trim(), CHARACTER_TURNAROUND_PROMPT]
-    .filter(Boolean)
-    .join("\n\n");
-}
+
 let draggingAttachmentIndex = null;
 
 function clearAttachmentDropStates() {
@@ -1673,12 +1650,10 @@ async function submitGeneration() {
     return showToast("角色三视图必须传入 1 张参考图", "error");
   if ((effectiveMode === "edit" || effectiveMode === "mask") && !state.sourceFiles.length)
     return showToast("请先上传原图", "error");
-  const prompt = effectiveMode === "characterTurnaround"
-    ? buildCharacterTurnaroundPrompt(rawPrompt)
-    : getPromptText(true).trim();
-  const displayPrompt = effectiveMode === "characterTurnaround"
-    ? rawPrompt
-    : prompt;
+  // 角色三视图的模板由后端拼接（prompts/character_turnaround.txt 是唯一来源），
+  // 前端只提交用户自己的描述，因此这里始终用带 @ 引用的完整提示词文本。
+  const prompt = getPromptText(true).trim();
+  const displayPrompt = rawPrompt;
   const conversation = ensureConversation(prompt);
   const dimensions = {
     width: Number(state.width) || 1024,
@@ -1746,6 +1721,8 @@ async function submitGeneration() {
         size: settings.size,
         quality: settings.quality,
         n: settings.count,
+        // 后端据此决定是否套用角色三视图模板。
+        mode: effectiveMode,
       }).forEach(([key, value]) => data.append(key, value));
       if (els.fidelity.checked) data.append("input_fidelity", "high");
       if (effectiveMode === "mask") {
