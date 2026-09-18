@@ -4,7 +4,7 @@ from fastapi import APIRouter, Request
 
 from auth.router import router as auth_router
 from auth.session import get_session
-from config_default import MODEL
+from config_default import AVAILABLE_MODELS, MODEL
 from image.router import router as image_router
 
 
@@ -23,3 +23,9 @@ async def health(request: Request):
         "model": MODEL,
         "baseURL": session["baseURL"] if session else None,
     }
+
+
+@router.get("/api/models", tags=["服务状态"])
+async def models():
+    """返回配置文件中可用的模型列表，供前端模型切换器使用。"""
+    return {"default": MODEL, "available": AVAILABLE_MODELS}

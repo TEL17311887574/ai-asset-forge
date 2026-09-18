@@ -1,21 +1,76 @@
-import {
-  ACTIVE_IMAGE_MODEL,
-  MAX_SOURCE_FILES,
-  MODEL_SIZE_PRESETS,
-  RESOLUTION_PRESETS,
-  modeContent,
-  modeLabels,
-} from "./modules/studio-config.js";
-import {
-  deleteConversation,
-  getConversations,
-  getLegacyGenerations,
-  putConversation,
-  sortConversations,
-} from "./modules/storage.js";
-
+const MAX_SOURCE_FILES = 16;
+const DB_NAME = "gpt-image-2-studio";
+const DB_VERSION = 3;
+const PROJECT_STORE = "projects";
+const CONVERSATION_STORE = "conversations";
+const LEGACY_STORE = "generations";
+// Keep every model/resolution/ratio combination in one place. If GPT Image
+// 2.5 uses different dimensions later, add another model entry here.
+const MODEL_SIZE_PRESETS = Object.freeze({
+  "gpt-image-2": Object.freeze({
+    "1K": Object.freeze({
+      "1:1": "1024x1024", "3:4": "768x1024", "16:9": "1024x576",
+      "4:3": "1024x768", "9:16": "576x1024", "2:3": "688x1024",
+      "3:2": "1024x688", "5:4": "1024x816", "4:5": "816x1024",
+      "21:9": "1024x432",
+    }),
+    "2K": Object.freeze({
+      "1:1": "2048x2048", "3:4": "1536x2048", "16:9": "2048x1152",
+      "4:3": "2048x1536", "9:16": "1152x2048", "2:3": "1360x2048",
+      "3:2": "2048x1360", "5:4": "2048x1632", "4:5": "1632x2048",
+      "21:9": "2048x880",
+    }),
+    "3K": Object.freeze({
+      // 3072x3072 would exceed GPT Image 2's 8,294,400-pixel limit.
+      "1:1": "2880x2880", "3:4": "2304x3072", "16:9": "3072x1728",
+      "4:3": "3072x2304", "9:16": "1728x3072", "2:3": "2048x3072",
+      "3:2": "3072x2048", "5:4": "3072x2464", "4:5": "2464x3072",
+      "21:9": "3072x1312",
+    }),
+    "4K": Object.freeze({
+      "1:1": "2880x2880", "3:4": "2496x3312", "16:9": "3840x2160",
+      "4:3": "3312x2496", "9:16": "2160x3840", "2:3": "2352x3520",
+      "3:2": "3520x2352", "5:4": "3216x2576", "4:5": "2576x3216",
+      "21:9": "3840x1648",
+    }),
+  }),
+});
+const ACTIVE_IMAGE_MODEL = "gpt-image-2";
+const RESOLUTION_PRESETS = Object.freeze({
+  "1K": Object.freeze({ longEdge: 1024, fitToMaxPixels: false }),
+  "2K": Object.freeze({ longEdge: 2048, fitToMaxPixels: false }),
+  "3K": Object.freeze({ longEdge: 3072, fitToMaxPixels: false }),
+  "4K": Object.freeze({ longEdge: 3840, fitToMaxPixels: true }),
+});
+const modeContent = {
+  default: "程序会根据是否上传参考图，自动选择文生图或图生图。",
+  mask: "上传原图并擦出蒙版区域，只修改你指定的部分。",
+  characterTurnaround: "需 1 张参考图，生成工作室肖像与全身三视图。",
+  sceneMultiView: "需 1 张参考图，生成 2×2 场景多视角网格。",
+};
+const modeLabels = {
+  default: "默认",
+  generate: "文生图",
+  edit: "图生图",
+  mask: "蒙版编辑",
+  characterTurnaround: "角色三视图",
+  sceneMultiView: "场景多视角",
+};
+// 单参考图模式：角色三视图与场景多视角都只能使用 1 张参考图。
+const SINGLE_REFERENCE_MODES = ["characterTurnaround", "sceneMultiView"];
+// 特殊模式的允许比例；切换模式时若当前比例不可用，自动回退到列表第一项。
+const MODE_ALLOWED_RATIOS = {
+  characterTurnaround: ["16:9", "21:9"],
+  sceneMultiView: ["9:16", "16:9", "21:9"],
+};
+const TURNAROUND_ALLOWED_RATIOS = MODE_ALLOWED_RATIOS.characterTurnaround;
+const PROMPT_PLACEHOLDERS = {
+  default: "描述你想生成的画面… 输入 @ 选择参考图",
+  singleReference: "可不输入提示词，直接发送",
+};
+const MASK_EDITABLE_ERROR = "蒙版中没有透明区域，请先擦出要编辑的区域";
 const state = {
-  mode: "generate",
+  mode: "default",
   sourceFiles: [],
   maskFile: null,
   busy: false,
@@ -28,6 +83,8 @@ const state = {
   linkSize: true,
   conversations: [],
   activeConversationId: null,
+  projects: [],
+  activeProjectId: null,
   pendingMentions: [],
   mentionCursor: -1,
   mentionRange: null,
@@ -35,6 +92,8 @@ const state = {
   activeMaskIndex: 0,
   maskEditorOpen: false,
   authenticated: false,
+  model: "gpt-image-2",
+  availableModels: [],
 };
 const $ = (selector) => document.querySelector(selector);
 const refreshIcons = () =>
@@ -70,8 +129,15 @@ const els = {
   submitButton: $("#submitButton"),
   submitIcon: $("#submitIcon"),
   settingsButton: $("#settingsButton"),
+  modelButton: $("#modelButton"),
+  modelLabel: $("#modelLabel"),
+  modelPopover: $("#modelPopover"),
+  modelOptions: $("#modelOptions"),
+  closeModel: $("#closeModel"),
   settingsPopover: $("#settingsPopover"),
   closeSettings: $("#closeSettings"),
+  modePopover: $("#modePopover"),
+  closeMode: $("#closeMode"),
   modeButton: $("#modeButton"),
   modeLabel: $("#modeLabel"),
   status: $("#toast"),
@@ -88,6 +154,10 @@ const els = {
   welcomeScreen: $("#welcomeScreen"),
   conversationStage: $("#conversationStage"),
   composerWrap: $("#composerWrap"),
+  projectList: $("#projectList"),
+  projectTotal: $("#projectTotal"),
+  projectScope: $("#projectScope"),
+  newProject: $("#newProject"),
   conversationList: $("#conversationList"),
   conversationTotal: $("#conversationTotal"),
   conversationTitle: $("#conversationTitle"),
@@ -104,6 +174,7 @@ const els = {
   authSubmit: $("#authSubmit"),
   closeAuth: $("#closeAuth"),
   imageLightbox: $("#imageLightbox"),
+  lightboxDownload: $("#lightboxDownload"),
   lightboxImage: $("#lightboxImage"),
   lightboxTitle: $("#lightboxTitle"),
   lightboxCaption: $("#lightboxCaption"),
@@ -117,6 +188,7 @@ const els = {
   confirmAction: $("#confirmAction"),
   composerHint: $("#composerHint"),
 };
+let dbPromise;
 let confirmCallback;
 let confirmNeedsSecondStep = false;
 let toastTimer;
@@ -161,6 +233,15 @@ function renderImageLightbox() {
   els.lightboxImage.src = item.src;
   els.lightboxImage.alt = item.alt || "图片预览";
   els.lightboxCaption.textContent = item.caption || `${lightboxState.index + 1} / ${lightboxState.items.length}`;
+  // 预览中的下载按钮始终跟随当前这张图。
+  if (els.lightboxDownload) {
+    els.lightboxDownload.href = item.src;
+    els.lightboxDownload.download = item.downloadName || `image-${lightboxState.index + 1}.png`;
+    els.lightboxDownload.setAttribute(
+      "aria-label",
+      `下载${item.alt ? ` ${item.alt}` : "当前图片"}`,
+    );
+  }
   const hasMultiple = lightboxState.items.length > 1;
   els.lightboxPrev.classList.toggle("hidden", !hasMultiple);
   els.lightboxNext.classList.toggle("hidden", !hasMultiple);
@@ -438,6 +519,147 @@ function dataUrlBlob(dataUrl) {
     return null;
   }
 }
+async function hasTransparentPixel(dataUrl) {
+  return new Promise((resolve) => {
+    if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/png"))
+      return resolve(false);
+    const image = new Image();
+    image.onload = () => {
+      if (!image.naturalWidth || !image.naturalHeight) return resolve(false);
+      const canvas = document.createElement("canvas");
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      if (!context) return resolve(false);
+      context.drawImage(image, 0, 0);
+      try {
+        const alpha = context.getImageData(
+          0,
+          0,
+          canvas.width,
+          canvas.height,
+        ).data;
+        for (let index = 3; index < alpha.length; index += 4) {
+          if (alpha[index] < 255) return resolve(true);
+        }
+      } catch {
+        return resolve(false);
+      }
+      resolve(false);
+    };
+    image.onerror = () => resolve(false);
+    image.src = dataUrl;
+  });
+}
+
+async function validateMaskSources() {
+  for (const source of state.sourceFiles) {
+    if (!source.maskDataUrl) continue;
+    const hasEditableArea = await hasTransparentPixel(source.maskDataUrl);
+    if (!hasEditableArea) return false;
+  }
+  return true;
+}
+
+function useGeneratedImageAsReference(message, index, image) {
+  const blob = dataUrlBlob(image?.dataUrl);
+  if (!(blob instanceof Blob)) {
+    showToast("生成图片数据不可用，无法添加为参考图", "error");
+    return;
+  }
+  const previousCount = state.sourceFiles.length;
+  const file = new File(
+    [blob],
+    generatedFileName(message, index),
+    { type: blob.type || "image/png" },
+  );
+  setSourceFiles([file]);
+  if (state.sourceFiles.length > previousCount) {
+    showToast("已添加到参考图", "success");
+    els.prompt.focus({ preventScroll: true });
+  }
+}
+
+function splitImageFileType(dataUrl) {
+  const mime = dataUrl?.match(/^data:([^;]+)/i)?.[1];
+  return mime || "image/jpeg";
+}
+
+function useSplitImageAsReference(splitItem, splitIndex) {
+  const blob = dataUrlBlob(splitItem?.dataUrl);
+  if (!(blob instanceof Blob)) {
+    showToast("拆分图片数据不可用，无法添加为参考图", "error");
+    return;
+  }
+  const previousCount = state.sourceFiles.length;
+  const file = new File(
+    [blob],
+    splitItem?.name || `grid-split-${splitIndex + 1}.jpg`,
+    { type: blob.type || splitImageFileType(splitItem?.dataUrl) },
+  );
+  setSourceFiles([file]);
+  if (state.sourceFiles.length > previousCount) {
+    showToast("已添加到参考图", "success");
+    els.prompt.focus({ preventScroll: true });
+  }
+}
+
+async function splitGeneratedGrid(message, index, image, button) {
+  const blob = dataUrlBlob(image?.dataUrl);
+  if (!(blob instanceof Blob)) {
+    showToast("生成图片数据不可用，无法拆分", "error");
+    return;
+  }
+  const originalIcon = button.innerHTML;
+  button.disabled = true;
+  button.innerHTML = "<span>…</span>";
+  try {
+    const data = new FormData();
+    data.append("image", blob, generatedFileName(message, index));
+    const response = await fetch("/api/split-grid", {
+      method: "POST",
+      body: data,
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      const requestError = new Error(result.error || "宫格图拆分失败");
+      requestError.status = response.status;
+      throw requestError;
+    }
+    const splitImages = (result.images || []).map((item) => ({
+      dataUrl: item.dataUrl,
+      name: item.name || `grid-split-${Date.now()}.jpg`,
+    }));
+    if (!splitImages.length) throw new Error(result.error || "宫格图拆分失败");
+    // 保留每次拆分结果，便于用户在同一生成图下回看历史拆分。
+    if (!Array.isArray(message.splitHistory)) message.splitHistory = [];
+    message.splitHistory.push({
+      id: `split-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+      createdAt: Date.now(),
+      images: splitImages,
+    });
+    message.activeSplitId = message.splitHistory.at(-1).id;
+    message.splitImages = splitImages;
+    message.splitCreatedAt = Date.now();
+    const conversation = state.conversations.find(
+      (item) => item.id === state.activeConversationId,
+    );
+    await saveConversation(conversation);
+    renderConversationMessages(conversation);
+    showToast(`已拆分出 ${splitImages.length} 张图片`, "success");
+  } catch (error) {
+    if (error.status === 401) {
+      setAuthenticated(false);
+      openAuthModal();
+    }
+    showToast(error.message, "error");
+  } finally {
+    button.disabled = false;
+    button.innerHTML = originalIcon;
+    refreshIcons();
+  }
+}
+
 async function toUploadFile(item, index) {
   const blob = sourceBlob(item) || dataUrlBlob(item?.dataUrl);
   if (!(blob instanceof Blob))
@@ -448,6 +670,162 @@ async function toUploadFile(item, index) {
         type: blob.type || "image/png",
       });
 }
+function openDb() {
+  if (dbPromise) return dbPromise;
+  dbPromise = new Promise((resolve, reject) => {
+    if (!("indexedDB" in window))
+      return reject(
+        new Error("当前浏览器不支持 IndexedDB，本地对话无法保存。"),
+      );
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = (event) => {
+      const db = request.result;
+      const transaction = request.transaction;
+      // 新增项目表（v3）。老用户升级时把已有对话归入默认项目，见下方迁移。
+      if (!db.objectStoreNames.contains(PROJECT_STORE)) {
+        const projects = db.createObjectStore(PROJECT_STORE, {
+          keyPath: "id",
+        });
+        projects.createIndex("updatedAt", "updatedAt");
+      }
+      if (!db.objectStoreNames.contains(CONVERSATION_STORE)) {
+        const conversations = db.createObjectStore(CONVERSATION_STORE, {
+          keyPath: "id",
+        });
+        conversations.createIndex("updatedAt", "updatedAt");
+        conversations.createIndex("pinned", "pinned");
+      }
+      if (!db.objectStoreNames.contains(LEGACY_STORE)) {
+        const generations = db.createObjectStore(LEGACY_STORE, {
+          keyPath: "id",
+        });
+        generations.createIndex("createdAt", "createdAt");
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () =>
+      reject(request.error || new Error("无法打开本地数据库。"));
+  });
+  return dbPromise;
+}
+function idbRequest(request) {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () =>
+      reject(request.error || new Error("本地数据库操作失败。"));
+  });
+}
+async function getConversations() {
+  const db = await openDb();
+  return idbRequest(
+    db
+      .transaction(CONVERSATION_STORE, "readonly")
+      .objectStore(CONVERSATION_STORE)
+      .getAll(),
+  );
+}
+async function putConversation(conversation) {
+  const db = await openDb();
+  return idbRequest(
+    db
+      .transaction(CONVERSATION_STORE, "readwrite")
+      .objectStore(CONVERSATION_STORE)
+      .put(conversation),
+  );
+}
+async function deleteConversationFromDb(id) {
+  const db = await openDb();
+  return idbRequest(
+    db
+      .transaction(CONVERSATION_STORE, "readwrite")
+      .objectStore(CONVERSATION_STORE)
+      .delete(id),
+  );
+}
+// ---------------------------------------------------------------- 项目层
+// 结构：项目（projects）1 ── n 会话（conversations），会话带 projectId 外键。
+// 老数据（无 projectId）由 migrateConversationsToProjects 归入默认项目，
+// 因此升级数据库不会丢失已有对话。
+const DEFAULT_PROJECT_TITLE = "默认项目";
+
+async function getProjects() {
+  const db = await openDb();
+  return idbRequest(
+    db.transaction(PROJECT_STORE, "readonly").objectStore(PROJECT_STORE).getAll(),
+  );
+}
+async function putProject(project) {
+  const db = await openDb();
+  return idbRequest(
+    db.transaction(PROJECT_STORE, "readwrite").objectStore(PROJECT_STORE).put(project),
+  );
+}
+async function deleteProjectFromDb(id) {
+  const db = await openDb();
+  const projectStore = db.transaction(PROJECT_STORE, "readwrite").objectStore(PROJECT_STORE);
+  return idbRequest(projectStore.delete(id));
+}
+function createProject(title = "新建项目") {
+  return {
+    id: uid("project"),
+    title,
+    collapsed: false,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+}
+async function saveProject(project) {
+  project.updatedAt = Date.now();
+  await putProject(project);
+  state.projects = sortProjects(
+    state.projects.filter((item) => item.id !== project.id).concat(project),
+  );
+  renderConversationList();
+}
+function sortProjects(items) {
+  return items.sort((a, b) => a.createdAt - b.createdAt);
+}
+
+/** 把历史上没有 projectId 的对话归入默认项目，保证升级不丢数据。 */
+async function migrateConversationsToProjects() {
+  const orphans = state.conversations.filter((item) => !item.projectId);
+  if (!orphans.length) return;
+
+  let fallback = state.projects.find((item) => item.title === DEFAULT_PROJECT_TITLE);
+  if (!fallback) {
+    fallback = createProject(DEFAULT_PROJECT_TITLE);
+    await putProject(fallback);
+    state.projects.push(fallback);
+  }
+
+  await Promise.all(
+    orphans.map((conversation) => {
+      conversation.projectId = fallback.id;
+      return putConversation(conversation);
+    }),
+  );
+  state.projects = sortProjects(state.projects);
+}
+
+function activeProject() {
+  return state.projects.find((item) => item.id === state.activeProjectId) || null;
+}
+/** 当前项目下的会话；没有选中项目时返回全部（便于搜索场景）。 */
+function conversationsInProject(projectId) {
+  return state.conversations.filter((item) => item.projectId === projectId);
+}
+
+async function readLegacyGenerations() {
+  const db = await openDb();
+  return idbRequest(
+    db.transaction(LEGACY_STORE, "readonly").objectStore(LEGACY_STORE).getAll(),
+  );
+}
+function sortConversations(items) {
+  return items.sort(
+    (a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt - a.updatedAt,
+  );
+}
 function titleFromPrompt(prompt) {
   const title = String(prompt || "")
     .replace(/\s+/g, " ")
@@ -456,6 +834,216 @@ function titleFromPrompt(prompt) {
     ? `${title.slice(0, 18)}${title.length > 18 ? "…" : ""}`
     : "未命名对话";
 }
+function generatedFileName(message, index) {
+  // 统一下载命名：模型-时间戳-序号，避免不同入口（角标/预览）命名不一致。
+  const stamp = new Date(message?.createdAt || Date.now())
+    .toISOString()
+    .replace(/[:.]/g, "-")
+    .slice(0, 19);
+  return `gpt-image-2-${stamp}-${index + 1}.png`;
+}
+
+function appendSplitGridAccordion(card, message) {
+  // 兼容旧数据中的单次拆分结果，同时保留新版多次拆分历史。
+  const splitHistory = Array.isArray(message.splitHistory)
+    ? message.splitHistory.filter((item) => item?.images?.length)
+    : [];
+  if (
+    !splitHistory.length &&
+    Array.isArray(message.splitImages) &&
+    message.splitImages.length
+  ) {
+    splitHistory.push({
+      id: `split-legacy-${message.id || "result"}`,
+      createdAt: message.splitCreatedAt || message.createdAt || Date.now(),
+      images: message.splitImages,
+    });
+  }
+  if (!splitHistory.length) return;
+
+  const section = document.createElement("section");
+  section.className = "split-grid-accordion";
+  const latestId = splitHistory.at(-1)?.id;
+
+  splitHistory.forEach((splitResult, resultIndex) => {
+    const isOpen = splitResult.id === message.activeSplitId || (
+      message.activeSplitId == null && splitResult.id === latestId
+    );
+    const itemId = `split-grid-item-${message.id || "result"}-${resultIndex + 1}`;
+    const item = document.createElement("div");
+    item.className = "split-grid-item";
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "split-grid-toggle";
+    toggle.setAttribute("aria-expanded", String(isOpen));
+    toggle.setAttribute("aria-controls", itemId);
+    toggle.innerHTML =
+      '<span>宫格拆分结果</span><i data-lucide="chevron-down" aria-hidden="true"></i>';
+
+    const panel = document.createElement("div");
+    panel.className = "split-grid-panel";
+    panel.id = itemId;
+    const content = document.createElement("div");
+    content.className = "split-grid-content";
+    panel.append(content);
+
+    const setPanelHeight = (height = null) => {
+      if (height === null) {
+        panel.style.removeProperty("height");
+        panel.classList.add("expanded");
+        panel.classList.remove("collapsed");
+        return;
+      }
+      panel.style.height = `${height}px`;
+      panel.classList.add("collapsed");
+      panel.classList.remove("expanded");
+    };
+
+    const setExpanded = (expanded) => {
+      toggle.setAttribute("aria-expanded", String(expanded));
+      item.dataset.splitOpen = String(expanded);
+      if (expanded) {
+        setPanelHeight(panel.scrollHeight);
+        // 先强制浏览器记录当前高度，再切回自适应高度，确保展开动画生效。
+        void panel.offsetHeight;
+        requestAnimationFrame(() => setPanelHeight());
+      } else {
+        setPanelHeight(panel.scrollHeight);
+        requestAnimationFrame(() => setPanelHeight(0));
+      }
+    };
+
+    toggle.addEventListener("click", () => {
+      const expanded = toggle.getAttribute("aria-expanded") === "true";
+      setExpanded(!expanded);
+    });
+    panel.addEventListener("transitionend", (event) => {
+      if (event.target !== panel || event.propertyName !== "height") return;
+      if (toggle.getAttribute("aria-expanded") === "true") setPanelHeight();
+    });
+    content.querySelectorAll("img").forEach((img) => {
+      // Data URL 加载很快，但仍可能在动画期间完成；同步高度避免临时裁切。
+      img.addEventListener("load", () => {
+        if (toggle.getAttribute("aria-expanded") === "true") setPanelHeight();
+      });
+    });
+
+    const createdAt = new Date(splitResult.createdAt || Date.now());
+    const timeText = createdAt.toLocaleTimeString("zh-CN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    const toggleLabel = toggle.querySelector("span");
+    toggleLabel.textContent = `第 ${resultIndex + 1} 次拆分 · ${timeText} · ${splitResult.images.length} 张`;
+    const splitImages = document.createElement("div");
+    splitImages.className = "generation-images split-grid-images";
+    splitResult.images.forEach((image, splitIndex) => {
+      const wrap = document.createElement("div");
+      wrap.className = "generated-image-wrap split-image-wrap";
+      const img = document.createElement("img");
+      img.src = image.dataUrl;
+      img.alt = `第 ${resultIndex + 1} 次拆分结果 ${splitIndex + 1}`;
+      bindImagePreview(
+        wrap,
+        () =>
+          splitResult.images.map((item, itemIndex) => ({
+            src: item.dataUrl,
+            alt: `拆分结果 ${itemIndex + 1}`,
+            caption: `第 ${resultIndex + 1} 次拆分结果 ${itemIndex + 1} / ${splitResult.images.length}`,
+            downloadName: item.name || `grid-split-${itemIndex + 1}.jpg`,
+          })),
+        () => splitIndex,
+      );
+      const useAsReference = document.createElement("button");
+      useAsReference.type = "button";
+      useAsReference.className = "generated-use-reference split-use-reference";
+      useAsReference.setAttribute(
+        "aria-label",
+        `第 ${resultIndex + 1} 次拆分图片 ${splitIndex + 1} 用作参考图`,
+      );
+      useAsReference.title = "用作参考图";
+      useAsReference.innerHTML =
+        '<i data-lucide="image-plus" aria-hidden="true"></i>';
+      useAsReference.addEventListener("click", (event) => {
+        // 防止点击事件冒泡到拆分图容器，避免误触发图片灯箱预览。
+        event.stopPropagation();
+        useSplitImageAsReference(image, splitIndex);
+      });
+      const download = document.createElement("a");
+      download.className = "generated-download split-download";
+      download.href = image.dataUrl;
+      download.download = image.name || `grid-split-${splitIndex + 1}.jpg`;
+      download.setAttribute("aria-label", `下载拆分图片 ${splitIndex + 1}`);
+      download.title = `下载拆分图片 ${splitIndex + 1}`;
+      download.innerHTML = '<i data-lucide="download" aria-hidden="true"></i>';
+      wrap.append(img, useAsReference, download);
+      splitImages.append(wrap);
+    });
+    content.append(splitImages);
+    item.append(toggle, panel);
+    if (isOpen) {
+      item.dataset.splitOpen = "true";
+      panel.classList.add("expanded");
+    } else {
+      item.dataset.splitOpen = "false";
+      panel.classList.add("collapsed");
+      panel.style.height = "0px";
+    }
+    section.append(item);
+  });
+
+  card.append(section);
+  refreshIcons();
+}
+
+function appendGenerationActions(card, message) {
+  const actions = document.createElement("div");
+  actions.className = "generation-actions";
+  const edit = document.createElement("button");
+  edit.type = "button";
+  edit.className = "generation-action";
+  edit.innerHTML =
+    '<i data-lucide="wand-sparkles" aria-hidden="true"></i><span>重新编辑</span>';
+  edit.addEventListener("click", () => editMessage(message));
+  const regenerate = document.createElement("button");
+  regenerate.type = "button";
+  regenerate.className = "generation-action";
+  regenerate.innerHTML =
+    '<i data-lucide="refresh-cw" aria-hidden="true"></i><span>再次生成</span>';
+  regenerate.addEventListener("click", () => regenerateMessage(message));
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "generation-action danger";
+  remove.innerHTML =
+    '<i data-lucide="trash-2" aria-hidden="true"></i><span>删除图片</span>';
+  remove.addEventListener("click", () =>
+    askConfirm(
+      "删除这次生成的图片？",
+      "这条提示词记录也会一并移除，且无法恢复。",
+      async () => {
+        const conversation = state.conversations.find(
+          (entry) => entry.id === state.activeConversationId,
+        );
+        if (!conversation) return;
+        const generationIndex = conversation.messages.findIndex(
+          (entry) => entry.id === message.id,
+        );
+        const previousMessage = conversation.messages[generationIndex - 1];
+        const idsToRemove = new Set([message.id]);
+        if (previousMessage?.role === "user") idsToRemove.add(previousMessage.id);
+        conversation.messages = conversation.messages.filter(
+          (entry) => !idsToRemove.has(entry.id),
+        );
+        await saveConversation(conversation);
+        renderConversationMessages(conversation);
+      },
+    ),
+  );
+  actions.append(edit, regenerate, remove);
+  card.append(actions);
+}
+
 function dateLabel(timestamp) {
   const date = new Date(timestamp);
   const today = new Date();
@@ -587,6 +1175,11 @@ function setRatio(ratio) {
     showToast("请先上传原图，再使用原图比例", "error");
     return;
   }
+  // 特殊模式只支持白名单比例；被禁用的比例不生效，回退到该模式的默认比例。
+  const allowedRatios = MODE_ALLOWED_RATIOS[state.mode];
+  if (allowedRatios && !allowedRatios.includes(ratio)) {
+    ratio = allowedRatios[0];
+  }
   state.ratio = ratio;
   document.querySelectorAll(".ratio-option").forEach((button) => {
     const active = button.dataset.ratio === ratio;
@@ -596,35 +1189,72 @@ function setRatio(ratio) {
   if (state.linkSize || ratio === "original") syncDimensionsFromRatio();
   else updateDimensionPreview();
 }
+function getEffectiveGenerationMode() {
+  if (state.mode === "mask") return "mask";
+  if (state.mode === "characterTurnaround") return "characterTurnaround";
+  if (state.mode === "sceneMultiView") return "sceneMultiView";
+  return state.sourceFiles.length ? "edit" : "generate";
+}
+function getPromptPlaceholder() {
+  return SINGLE_REFERENCE_MODES.includes(state.mode)
+    ? PROMPT_PLACEHOLDERS.singleReference
+    : PROMPT_PLACEHOLDERS.default;
+}
+function syncPromptPlaceholder() {
+  els.prompt.dataset.placeholder = getPromptPlaceholder();
+}
 function setMode(mode) {
-  if (mode !== "mask" && state.maskEditorOpen) closeMaskEditor();
-  state.mode = mode;
+  const nextMode = ["mask", ...SINGLE_REFERENCE_MODES].includes(mode)
+    ? mode
+    : "default";
+  if (nextMode !== "mask" && state.maskEditorOpen) closeMaskEditor();
+  state.mode = nextMode;
   const originalRatio = document.querySelector('[data-ratio="original"]');
-  originalRatio?.classList.toggle("hidden", mode !== "mask");
-  if (mode !== "mask" && state.ratio === "original") {
+  originalRatio?.classList.toggle("hidden", nextMode !== "mask");
+  // 模式切换后同步比例按钮的禁用状态；特殊模式下若当前比例不可用则回退默认比例。
+  const allowedRatios = MODE_ALLOWED_RATIOS[nextMode];
+  document.querySelectorAll(".ratio-option").forEach((button) => {
+    const disabledRatio =
+      Boolean(allowedRatios) &&
+      !allowedRatios.includes(button.dataset.ratio);
+    button.disabled = disabledRatio;
+    button.setAttribute("aria-disabled", String(disabledRatio));
+  });
+  if (nextMode !== "mask" && state.ratio === "original") {
     setRatio("1:1");
   }
-  els.modeLabel.textContent = modeLabels[mode];
-  els.fidelityField.classList.toggle("hidden", mode === "generate");
-  els.attachButton.classList.toggle("hidden", mode === "generate");
-  els.prompt.placeholder = modeContent[mode] || modeContent["generate"];
+  if (allowedRatios && !allowedRatios.includes(state.ratio)) {
+    setRatio(allowedRatios[0]);
+  }
+  els.modeLabel.textContent = modeLabels[nextMode];
+  syncPromptPlaceholder();
+  els.fidelityField.classList.toggle(
+    "hidden",
+    getEffectiveGenerationMode() === "generate",
+  );
   els.maskEditor.classList.toggle(
-      "hidden",
-      mode !== "mask" || !state.sourceFiles.length,
-    );
+    "hidden",
+    nextMode !== "mask" || !state.sourceFiles.length,
+  );
   document.querySelectorAll("[data-mode]").forEach((button) => {
-    button.classList.toggle("active", button.dataset.mode === mode);
+    button.classList.toggle("active", button.dataset.mode === nextMode);
   });
-  if (mode === "mask") updateMaskFromSource();
-  if (mode === "mask" && state.ratio === "original" && state.sourceFiles.length)
+  if (nextMode === "mask") updateMaskFromSource();
+  if (nextMode === "mask" && state.ratio === "original" && state.sourceFiles.length)
     syncDimensionsFromRatio();
   renderAttachments();
 }
 function renderFileMeta() {
+  if (SINGLE_REFERENCE_MODES.includes(state.mode)) {
+    els.sourceMeta.textContent = `${state.sourceFiles.length} / 1 张参考图`;
+    return;
+  }
   els.sourceMeta.textContent = state.sourceFiles.length
     ? `${state.sourceFiles.length} / ${MAX_SOURCE_FILES} 张参考图`
     : `最多 ${MAX_SOURCE_FILES} 张参考图`;
 }
+
+
 let draggingAttachmentIndex = null;
 
 function clearAttachmentDropStates() {
@@ -673,6 +1303,10 @@ function reorderSourceFiles(fromIndex, toIndex) {
 function renderAttachments() {
   els.composerAttachments.replaceChildren();
   renderFileMeta();
+  els.fidelityField.classList.toggle(
+    "hidden",
+    getEffectiveGenerationMode() === "generate",
+  );
   state.sourceFiles.forEach((file, index) => {
     const item = document.createElement("div");
     item.className = "attachment-item";
@@ -768,6 +1402,14 @@ function renderAttachments() {
 }
 function setSourceFiles(files) {
   const incoming = [...files].filter((file) => file.type.startsWith("image/"));
+  const incomingCount = state.sourceFiles.length + incoming.length;
+  if (
+    SINGLE_REFERENCE_MODES.includes(state.mode) &&
+    incomingCount > 1
+  ) {
+    showToast(`${modeLabels[state.mode]}只能保留 1 张参考图，请删除多余图片`, "error");
+    return;
+  }
   const slots = Math.max(0, MAX_SOURCE_FILES - state.sourceFiles.length);
   const added = incoming
     .slice(0, slots)
@@ -1008,10 +1650,11 @@ function resetMaskCanvas() {
     resizeMaskCanvas(els.maskCanvas.width, els.maskCanvas.height);
 }
 
-function createConversation() {
+function createConversation(projectId = state.activeProjectId) {
   return {
     id: uid("conversation"),
     title: "新建对话",
+    projectId,
     pinned: false,
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -1029,9 +1672,24 @@ async function saveConversation(conversation) {
   renderConversationList();
 }
 function renderConversationList() {
+  document.querySelectorAll(".conversation-menu").forEach((menu) => menu.remove());
   els.conversationList.replaceChildren();
-  els.conversationTotal.textContent = state.conversations.length;
-  state.conversations.forEach((conversation) => {
+  const visible = state.activeProjectId
+    ? conversationsInProject(state.activeProjectId)
+    : state.conversations;
+  els.conversationTotal.textContent = visible.length;
+  if (els.projectScope)
+    els.projectScope.textContent = activeProject()?.title || "全部对话";
+  if (!visible.length) {
+    const empty = document.createElement("p");
+    empty.className = "conversation-list-empty";
+    empty.textContent = "还没有对话，点上面「新建对话」开始。";
+    els.conversationList.append(empty);
+    renderProjectList();
+    refreshIcons();
+    return;
+  }
+  visible.forEach((conversation) => {
     const item = document.createElement("div");
     item.setAttribute("role", "button");
     item.tabIndex = 0;
@@ -1129,7 +1787,26 @@ function renderConversationList() {
       document.querySelectorAll(".conversation-menu").forEach((other) => {
         if (other !== menu) other.classList.add("hidden");
       });
-      menu.classList.toggle("hidden");
+      document
+        .querySelectorAll(".conversation-item.menu-open")
+        .forEach((other) => {
+          if (other !== item) other.classList.remove("menu-open");
+        });
+      const willOpen = menu.classList.contains("hidden");
+      if (willOpen) {
+        // 弹层挂在 body 上，避免会话列表的 overflow 把它纳入滚动溢出。
+        const triggerRect = trigger.getBoundingClientRect();
+        const x = Math.max(8, triggerRect.right - menu.offsetWidth);
+        const y = Math.min(
+          window.innerHeight - menu.offsetHeight - 8,
+          triggerRect.bottom + 6,
+        );
+        menu.style.setProperty("--conversation-menu-x", `${Math.round(x)}px`);
+        menu.style.setProperty("--conversation-menu-y", `${Math.round(y)}px`);
+        document.body.append(menu);
+      }
+      menu.classList.toggle("hidden", !willOpen);
+      item.classList.toggle("menu-open", willOpen);
     });
     menu.append(pin, rename, del);
     item.append(leading, title, time, trigger, menu);
@@ -1147,7 +1824,162 @@ function renderConversationList() {
     });
     els.conversationList.append(item);
   });
+  renderProjectList();
   refreshIcons();
+}
+
+/* ---------------------------------------------------------------- 项目 UI */
+/** 只渲染项目列表本身，不回头调用 renderConversationList，避免递归。 */
+function renderProjectList() {
+  if (!els.projectList) return;
+  document.querySelectorAll(".project-menu").forEach((menu) => menu.remove());
+  els.projectList.replaceChildren();
+  if (els.projectTotal) els.projectTotal.textContent = state.projects.length;
+  state.projects.forEach((project) => {
+    const item = document.createElement("div");
+    item.setAttribute("role", "button");
+    item.tabIndex = 0;
+    item.className = `project-item${project.id === state.activeProjectId ? " active" : ""}`;
+    item.dataset.id = project.id;
+    item.setAttribute("aria-label", `切换到项目：${project.title}`);
+    const icon = document.createElement("span");
+    icon.className = "project-item-icon";
+    icon.innerHTML = `<i data-lucide="${project.id === state.activeProjectId ? "folder-open" : "folder"}" aria-hidden="true"></i>`;
+    const title = document.createElement("span");
+    title.className = "project-item-title";
+    title.textContent = project.title;
+    const count = document.createElement("span");
+    count.className = "project-item-count";
+    count.textContent = String(conversationsInProject(project.id).length);
+    const trigger = document.createElement("button");
+    trigger.className = "project-menu-trigger";
+    trigger.type = "button";
+    trigger.innerHTML = '<i data-lucide="ellipsis" aria-hidden="true"></i>';
+    trigger.setAttribute("aria-label", "项目操作");
+    const menu = document.createElement("div");
+    menu.className = "project-menu hidden";
+    const rename = document.createElement("button");
+    rename.type = "button";
+    rename.textContent = "重命名项目";
+    rename.addEventListener("click", (event) => {
+      event.stopPropagation();
+      menu.classList.add("hidden");
+      const next = window.prompt("输入新的项目名称", project.title);
+      if (!next?.trim()) return;
+      project.title = next.trim().slice(0, 40);
+      saveProject(project);
+    });
+    const addChat = document.createElement("button");
+    addChat.type = "button";
+    addChat.textContent = "在此项目新建对话";
+    addChat.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      menu.classList.add("hidden");
+      state.activeProjectId = project.id;
+      await openNewConversation();
+    });
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "delete-option";
+    del.textContent = "删除项目";
+    del.addEventListener("click", (event) => {
+      event.stopPropagation();
+      menu.classList.add("hidden");
+      deleteProject(project.id);
+    });
+    trigger.addEventListener("click", (event) => {
+      event.stopPropagation();
+      document.querySelectorAll(".project-menu").forEach((other) => {
+        if (other !== menu) other.classList.add("hidden");
+      });
+      const willOpen = menu.classList.contains("hidden");
+      if (willOpen) {
+        // 弹层挂在 body 上，避免项目列表的 overflow 把它纳入滚动溢出。
+        const triggerRect = trigger.getBoundingClientRect();
+        const x = Math.max(8, triggerRect.right - menu.offsetWidth);
+        const y = Math.min(
+          window.innerHeight - menu.offsetHeight - 8,
+          triggerRect.bottom + 6,
+        );
+        menu.style.setProperty("--project-menu-x", `${Math.round(x)}px`);
+        menu.style.setProperty("--project-menu-y", `${Math.round(y)}px`);
+        document.body.append(menu);
+      }
+      menu.classList.toggle("hidden", !willOpen);
+      item.classList.toggle("menu-open", willOpen);
+    });
+    menu.append(rename, addChat, del);
+    item.append(icon, title, count, trigger, menu);
+    item.addEventListener("click", () => {
+      closeAllMenus();
+      selectProject(project.id);
+      closeMobileHistory();
+    });
+    item.addEventListener("keydown", (event) => {
+      if (event.target !== item) return;
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        item.click();
+      }
+    });
+    els.projectList.append(item);
+  });
+  refreshIcons();
+}
+/** 切换当前项目：刷新对话列表，并在没有对话时给一个空白会话。 */
+function selectProject(id) {
+  state.activeProjectId = id;
+  renderProjectList();
+  resetConversationStage();
+}
+async function addProject() {
+  const project = createProject();
+  await putProject(project);
+  state.projects = sortProjects(state.projects.concat(project));
+  selectProject(project.id);
+  const item = els.projectList?.querySelector(`[data-id="${project.id}"]`);
+  item?.scrollIntoView({ block: "nearest" });
+  showToast("已新建项目");
+}
+/** 删除项目：连同其下所有对话一起清理，最后保证至少留下一个项目。 */
+async function deleteProject(id) {
+  const project = state.projects.find((entry) => entry.id === id);
+  if (!project) return;
+  const children = conversationsInProject(id);
+  askConfirm(
+    `删除项目「${project.title}」？`,
+    `该项目下的 ${children.length} 个对话也会一并删除，且无法恢复。`,
+    async () => {
+      await Promise.all(children.map((item) => deleteConversationFromDb(item.id)));
+      await deleteProjectFromDb(id);
+      state.conversations = state.conversations.filter(
+        (item) => item.projectId !== id,
+      );
+      state.projects = state.projects.filter((item) => item.id !== id);
+      if (!state.projects.length) {
+        const fallback = createProject(DEFAULT_PROJECT_TITLE);
+        await putProject(fallback);
+        state.projects.push(fallback);
+      }
+      state.activeProjectId = state.projects[0].id;
+      state.activeConversationId = null;
+      renderProjectList();
+      renderConversationList();
+      openNewConversation();
+      showToast("项目已删除");
+    },
+    true,
+  );
+}
+/** 保证存在至少一个项目，并返回当前项目。 */
+async function ensureProject() {
+  if (!state.projects.length) {
+    const project = createProject(DEFAULT_PROJECT_TITLE);
+    await putProject(project);
+    state.projects = sortProjects([project]);
+  }
+  if (!activeProject()) state.activeProjectId = state.projects[0].id;
+  return activeProject();
 }
 
 function openMobileHistory() {
@@ -1165,6 +1997,15 @@ function closeAllMenus() {
   document
     .querySelectorAll(".conversation-menu")
     .forEach((menu) => menu.classList.add("hidden"));
+  document
+    .querySelectorAll(".conversation-item.menu-open")
+    .forEach((item) => item.classList.remove("menu-open"));
+  document
+    .querySelectorAll(".project-menu")
+    .forEach((menu) => menu.classList.add("hidden"));
+  document
+    .querySelectorAll(".project-item.menu-open")
+    .forEach((item) => item.classList.remove("menu-open"));
 }
 
 function initAmbientMotion() {
@@ -1218,38 +2059,49 @@ function initAmbientMotion() {
     { once: true },
   );
 }
-async function openNewConversation() {
+/** 把主区域恢复到「空白新对话」，但不影响侧栏与项目选中状态。 */
+function resetConversationStage() {
   state.activeConversationId = null;
-  closeMobileHistory();
   state.sourceFiles = [];
   state.pendingMentions = [];
   state.mentionCursor = -1;
   state.maskFile = null;
-  state.mode = "generate";
+  state.mode = "default";
   setPromptText("");
   els.prompt.dispatchEvent(new Event("input"));
   els.messages.replaceChildren();
   els.welcomeScreen.classList.remove("hidden");
   els.conversationTitle.textContent = "新建对话";
   els.composerWrap.classList.remove("conversation-mode");
-  setMode("generate");
+  setMode("default");
   renderAttachments();
   renderMentionTags();
   renderConversationList();
   closeMentionPicker();
 }
+async function openNewConversation() {
+  if (!activeProject() && state.projects.length)
+    state.activeProjectId = state.projects[0].id;
+  closeMobileHistory();
+  resetConversationStage();
+}
 async function openConversation(id) {
   const conversation = state.conversations.find((item) => item.id === id);
   if (!conversation) return;
+  // 打开历史对话时同步切到它所属的项目，避免侧栏高亮与内容不一致。
+  if (conversation.projectId && conversation.projectId !== state.activeProjectId) {
+    state.activeProjectId = conversation.projectId;
+    renderProjectList();
+  }
   state.activeConversationId = id;
   state.sourceFiles = [];
   state.pendingMentions = [];
   state.mentionCursor = -1;
   state.maskFile = null;
-  state.mode = "generate";
+  state.mode = "default";
   setPromptText("");
   els.prompt.dispatchEvent(new Event("input"));
-  setMode("generate");
+  setMode("default");
   renderAttachments();
   renderMentionTags();
   closeMentionPicker();
@@ -1266,7 +2118,7 @@ function ensureConversation(prompt) {
     return state.conversations.find(
       (item) => item.id === state.activeConversationId,
     );
-  const conversation = createConversation();
+  const conversation = createConversation(state.activeProjectId);
   conversation.title = titleFromPrompt(prompt);
   state.activeConversationId = conversation.id;
   state.conversations.push(conversation);
@@ -1333,6 +2185,7 @@ function renderMessage(message) {
     loading.className = "generation-loading";
     loading.innerHTML = `<span>生成失败：${escapeHtml(message.error)}</span>`;
     card.append(loading);
+    appendGenerationActions(card, message);
   } else {
     const images = document.createElement("div");
     images.className = "generation-images";
@@ -1349,60 +2202,44 @@ function renderMessage(message) {
             src: item.dataUrl,
             alt: `生成结果 ${itemIndex + 1}`,
             caption: `生成结果 ${itemIndex + 1} / ${(message.images || []).length}`,
+            downloadName: generatedFileName(message, itemIndex),
           })),
         () => index,
       );
+      const useAsReference = document.createElement("button");
+      useAsReference.type = "button";
+      useAsReference.className = "generated-use-reference";
+      useAsReference.setAttribute("aria-label", `用作参考图 ${index + 1}`);
+      useAsReference.title = "用作参考图";
+      useAsReference.innerHTML = '<i data-lucide="image-plus" aria-hidden="true"></i>';
+      useAsReference.addEventListener("click", (event) => {
+        // 防止点击事件冒泡到生成图容器，避免误触发图片灯箱预览。
+        event.stopPropagation();
+        useGeneratedImageAsReference(message, index, image);
+      });
       const download = document.createElement("a");
       download.className = "generated-download";
       download.href = image.dataUrl;
-      download.download = `gpt-image-2-${message.createdAt}-${index + 1}.png`;
-      download.setAttribute("aria-label", `下载生成结果 ${index + 1}`);
+      download.download = generatedFileName(message, index);
+      download.setAttribute("aria-label", `下载图片 ${index + 1}`);
+      download.title = `下载图片 ${index + 1}`;
       download.innerHTML = '<i data-lucide="download" aria-hidden="true"></i>';
-      wrap.append(img, download);
+      const splitGrid = document.createElement("button");
+      splitGrid.type = "button";
+      splitGrid.className = "generated-split-grid";
+      splitGrid.setAttribute("aria-label", `宫格图拆分 ${index + 1}`);
+      splitGrid.title = "宫格图拆分";
+      splitGrid.innerHTML = '<i data-lucide="grid-2X2" aria-hidden="true"></i>';
+      splitGrid.addEventListener("click", (event) => {
+        event.stopPropagation();
+        splitGeneratedGrid(message, index, image, splitGrid);
+      });
+      wrap.append(img, useAsReference, splitGrid, download);
       images.append(wrap);
     });
     card.append(images);
-    const actions = document.createElement("div");
-    actions.className = "generation-actions";
-    const edit = document.createElement("button");
-    edit.type = "button";
-    edit.className = "generation-action";
-    edit.innerHTML = '<i data-lucide="wand-sparkles" aria-hidden="true"></i><span>重新编辑</span>';
-    edit.addEventListener("click", () => editMessage(message));
-    const regenerate = document.createElement("button");
-    regenerate.type = "button";
-    regenerate.className = "generation-action";
-    regenerate.innerHTML = '<i data-lucide="refresh-cw" aria-hidden="true"></i><span>再次生成</span>';
-    regenerate.addEventListener("click", () => regenerateMessage(message));
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "generation-action danger";
-    remove.innerHTML = '<i data-lucide="trash-2" aria-hidden="true"></i><span>删除</span>';
-    remove.addEventListener("click", () =>
-      askConfirm(
-        "删除这次生成？",
-        "这条提示词和图片会从当前对话中移除。",
-        async () => {
-          const conversation = state.conversations.find(
-            (entry) => entry.id === state.activeConversationId,
-          );
-          if (!conversation) return;
-          const generationIndex = conversation.messages.findIndex(
-            (entry) => entry.id === message.id,
-          );
-          const previousMessage = conversation.messages[generationIndex - 1];
-          const idsToRemove = new Set([message.id]);
-          if (previousMessage?.role === "user") idsToRemove.add(previousMessage.id);
-          conversation.messages = conversation.messages.filter(
-            (entry) => !idsToRemove.has(entry.id),
-          );
-          await saveConversation(conversation);
-          renderConversationMessages(conversation);
-        },
-      ),
-    );
-    actions.append(edit, regenerate, remove);
-    card.append(actions);
+    appendSplitGridAccordion(card, message);
+    appendGenerationActions(card, message);
   }
   reply.append(card);
   els.messages.append(reply);
@@ -1438,7 +2275,9 @@ function getReferences() {
   }));
 }
 function editMessage(message) {
-  state.mode = message.mode || "generate";
+  state.mode = ["mask", ...SINGLE_REFERENCE_MODES].includes(message.mode)
+    ? message.mode
+    : "default";
   state.ratio = message.ratio || "1:1";
   state.resolution = message.resolution || "1K";
   state.quality = message.quality || "medium";
@@ -1471,6 +2310,15 @@ function editMessage(message) {
   els.count.value = String(state.count);
   setMode(state.mode);
   setRatio(state.ratio);
+  // “重新编辑 / 再次生成”回填历史参数后，同步特殊模式的禁用状态。
+  const allowedRatios = MODE_ALLOWED_RATIOS[state.mode];
+  document.querySelectorAll(".ratio-option").forEach((button) => {
+    const disabledRatio =
+      Boolean(allowedRatios) &&
+      !allowedRatios.includes(button.dataset.ratio);
+    button.disabled = disabledRatio;
+    button.setAttribute("aria-disabled", String(disabledRatio));
+  });
   updateDimensionPreview();
   renderAttachments();
   renderMentionTags();
@@ -1491,13 +2339,22 @@ async function submitGeneration() {
   if (state.maskEditorOpen) saveActiveMask();
   syncPendingMentions();
   const rawPrompt = getPromptText(false).trim();
-  if (!rawPrompt) return showToast("请先输入提示词", "error");
-  const effectiveMode =
-    state.mode === "generate" && state.sourceFiles.length ? "edit" : 
-    state.mode === "turnaround" ? "turnaround" : state.mode;
-  if (effectiveMode !== "generate" && !state.sourceFiles.length)
+  const effectiveMode = getEffectiveGenerationMode();
+  // 角色三视图 / 场景多视角可仅依赖参考图与后端模板生成，提示词改为可选。
+  if (!rawPrompt && !SINGLE_REFERENCE_MODES.includes(effectiveMode))
+    return showToast("请先输入提示词", "error");
+  if (SINGLE_REFERENCE_MODES.includes(effectiveMode) && state.sourceFiles.length !== 1)
+    return showToast(`${modeLabels[effectiveMode]}必须传入 1 张参考图`, "error");
+  if ((effectiveMode === "edit" || effectiveMode === "mask") && !state.sourceFiles.length)
     return showToast("请先上传原图", "error");
+  if (effectiveMode === "mask" && !state.sourceFiles.some((file) => file.maskDataUrl))
+    return showToast("请先编辑并保存至少一个蒙版", "error");
+  if (effectiveMode === "mask" && !(await validateMaskSources()))
+    return showToast(MASK_EDITABLE_ERROR, "error");
+  // 特殊单参考图模式的模板由后端拼接（prompts/ 目录是唯一来源），
+  // 前端只提交用户自己的描述，因此这里始终用带 @ 引用的完整提示词文本。
   const prompt = getPromptText(true).trim();
+  const displayPrompt = rawPrompt;
   const conversation = ensureConversation(prompt);
   const dimensions = {
     width: Number(state.width) || 1024,
@@ -1507,6 +2364,7 @@ async function submitGeneration() {
     prompt,
     originalPrompt: rawPrompt,
     mode: effectiveMode,
+    model: state.model,
     ratio: state.ratio,
     resolution: state.resolution,
     quality: els.quality.value,
@@ -1521,7 +2379,7 @@ async function submitGeneration() {
   const userMessage = {
     id: uid("user"),
     role: "user",
-    prompt,
+    prompt: displayPrompt,
     createdAt: Date.now(),
   };
   const generation = {
@@ -1550,6 +2408,7 @@ async function submitGeneration() {
           size: settings.size,
           quality: settings.quality,
           n: settings.count,
+          model: state.model,
         }),
       });
     else {
@@ -1565,15 +2424,12 @@ async function submitGeneration() {
         size: settings.size,
         quality: settings.quality,
         n: settings.count,
+        // 后端据此决定是否套用角色三视图模板。
+        mode: effectiveMode,
+        model: state.model,
       }).forEach(([key, value]) => data.append(key, value));
       if (els.fidelity.checked) data.append("input_fidelity", "high");
-      if (effectiveMode === "turnaround") {
-        // 人物三视图模式：只需要单张原图
-        response = await fetch("/api/character-turnaround", {
-          method: "POST",
-          body: data,
-        });
-      } else if (effectiveMode === "mask") {
+      if (effectiveMode === "mask") {
         // Keep the first mask on the legacy field and expose additional masks
         // as indexed multipart fields for the multi-reference API contract.
         const blob = dataUrlBlob(state.sourceFiles[0]?.maskDataUrl);
@@ -1640,10 +2496,13 @@ els.prompt.addEventListener("input", () => {
 });
 els.prompt.addEventListener("keydown", (event) => {
   if (event.key === "Escape") closeMentionPicker();
-  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-    event.preventDefault();
-    submitGeneration();
-  }
+  if (event.key !== "Enter") return;
+  // 输入法组合态（拼音/日文等）下按 Enter 是选词，不应发送。
+  if (event.isComposing || event.keyCode === 229) return;
+  // Shift+Enter 插入换行，交给浏览器默认行为。
+  if (event.shiftKey) return;
+  event.preventDefault();
+  submitGeneration();
 });
 document.addEventListener("click", (event) => {
   if (
@@ -1652,13 +2511,30 @@ document.addEventListener("click", (event) => {
     event.target !== els.prompt
   )
     closeMentionPicker();
-  if (!event.target.closest(".conversation-item")) closeAllMenus();
+  if (
+    !event.target.closest(
+      ".conversation-menu, .conversation-menu-trigger, .project-menu, .project-menu-trigger",
+    )
+  )
+    closeAllMenus();
   if (
     !els.settingsPopover.classList.contains("hidden") &&
     !els.settingsPopover.contains(event.target) &&
-    !event.target.closest("#settingsButton, #modeButton")
+    !event.target.closest("#settingsButton, #modeButton, #modelButton")
   )
     setSettingsOpen(false);
+  if (
+    !els.modePopover.classList.contains("hidden") &&
+    !els.modePopover.contains(event.target) &&
+    !event.target.closest("#modeButton, #modelButton")
+  )
+    setModePopoverOpen(false);
+  if (
+    !els.modelPopover.classList.contains("hidden") &&
+    !els.modelPopover.contains(event.target) &&
+    !event.target.closest("#modelButton")
+  )
+    setModelPopoverOpen(false);
 });
 document.addEventListener("keydown", (event) => {
   if (!els.authModal.classList.contains("hidden")) {
@@ -1695,6 +2571,7 @@ document.addEventListener("keydown", (event) => {
   closeMentionPicker();
   closeAllMenus();
   setSettingsOpen(false);
+  setModePopoverOpen(false);
   closeMobileHistory();
   if (!els.confirmBackdrop.classList.contains("hidden")) closeConfirm();
 });
@@ -1712,29 +2589,167 @@ document
   );
 document.querySelectorAll("[data-mode]").forEach((button) =>
   button.addEventListener("click", () => {
+    if (
+      SINGLE_REFERENCE_MODES.includes(button.dataset.mode) &&
+      state.sourceFiles.length > 1
+    ) {
+      const firstImage = state.sourceFiles[0];
+      state.sourceFiles = [firstImage];
+      els.prompt.querySelectorAll(".inline-mention").forEach((mention) => {
+        const mentionIndex = Number(mention.dataset.index);
+        if (mentionIndex === 0) updateInlineMention(mention, 0);
+        else mention.remove();
+      });
+      syncPendingMentions();
+      renderMentionTags();
+      showToast(`已为${modeLabels[button.dataset.mode]}保留第一张参考图`);
+    }
     setMode(button.dataset.mode);
-    if (button.closest(".mode-segment"))
-      setSettingsOpen(false);
+    if (button.closest(".mode-options"))
+      setModePopoverOpen(false);
   }),
 );
-els.settingsButton.addEventListener("click", () =>
-  toggleSettingsPopover(),
-);
+els.settingsButton.addEventListener("click", () => {
+  setModePopoverOpen(false);
+  setModelPopoverOpen(false);
+  toggleSettingsPopover();
+});
 els.closeSettings.addEventListener("click", () =>
   setSettingsOpen(false),
 );
+els.closeMode?.addEventListener("click", () =>
+  setModePopoverOpen(false),
+);
+els.modelButton.addEventListener("click", () => {
+  setSettingsOpen(false);
+  setModePopoverOpen(false);
+  toggleModelPopover();
+});
+els.closeModel?.addEventListener("click", () => setModelPopoverOpen(false));
 els.modeButton.addEventListener("click", () => {
-  setSettingsOpen(true);
-  els.settingsPopover.scrollIntoView({ block: "nearest" });
+  setSettingsOpen(false);
+  setModelPopoverOpen(false);
+  toggleModePopover();
 });
 function setSettingsOpen(open) {
   els.settingsPopover.classList.toggle("hidden", !open);
   els.settingsButton.setAttribute("aria-expanded", String(open));
-  els.modeButton.setAttribute("aria-expanded", String(open));
+  if (open) positionSettingsPopover();
 }
 function toggleSettingsPopover() {
   setSettingsOpen(els.settingsPopover.classList.contains("hidden"));
 }
+function positionSettingsPopover() {
+  const rect = els.settingsButton.getBoundingClientRect();
+  const popup = els.settingsPopover;
+  popup.style.left = "0px";
+  popup.style.top = "0px";
+  popup.style.right = "auto";
+  popup.style.bottom = "auto";
+  popup.style.visibility = "hidden";
+  popup.style.maxHeight = "";
+  popup.style.height = "";
+  popup.classList.remove("hidden");
+  const popupRect = popup.getBoundingClientRect();
+  let left = rect.left;
+  const maxLeft = window.innerWidth - popupRect.width - 10;
+  left = Math.max(10, Math.min(left, maxLeft));
+  let top = rect.top - popupRect.height - 10;
+  if (top < 10) top = rect.bottom + 10;
+  popup.style.left = left + "px";
+  popup.style.top = top + "px";
+  popup.style.visibility = "";
+}
+function setModePopoverOpen(open) {
+  els.modePopover.classList.toggle("hidden", !open);
+  els.modeButton.setAttribute("aria-expanded", String(open));
+  if (open) positionModePopover();
+}
+function positionModePopover() {
+  const rect = els.modeButton.getBoundingClientRect();
+  const popup = els.modePopover;
+  popup.style.visibility = "hidden";
+  popup.classList.remove("hidden");
+  const popupRect = popup.getBoundingClientRect();
+  let left = rect.left;
+  const maxLeft = window.innerWidth - popupRect.width - 10;
+  left = Math.max(10, Math.min(left, maxLeft));
+  let top = rect.top - popupRect.height - 10;
+  if (top < 10) top = rect.bottom + 10;
+  popup.style.left = left + "px";
+  popup.style.top = top + "px";
+  popup.style.visibility = "";
+}
+function toggleModePopover() {
+  setModePopoverOpen(els.modePopover.classList.contains("hidden"));
+}
+// ---------- 模型选择器（需求6） ----------
+const MODEL_DESCRIPTIONS = {
+  "gpt-image-2": "快速、经济的通用出图模型",
+  "gpt-image-2.5": "更高质量、更高保真度",
+};
+function renderModelOptions() {
+  const models = state.availableModels.length
+    ? state.availableModels
+    : [state.model];
+  els.modelOptions.innerHTML = "";
+  models.forEach((name) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "model-option" + (name === state.model ? " active" : "");
+    button.dataset.model = name;
+    button.setAttribute("role", "radio");
+    button.setAttribute("aria-checked", String(name === state.model));
+    const desc = MODEL_DESCRIPTIONS[name] || "可用模型";
+    button.innerHTML =
+      '<span class="model-option-icon"><i data-lucide="cpu"></i></span>' +
+      '<span class="model-option-copy">' +
+      `<span class="model-option-title">${escapeHtml(name)}</span>` +
+      `<span class="model-option-desc">${escapeHtml(desc)}</span>` +
+      "</span>" +
+      '<span class="model-option-state"><i data-lucide="check"></i></span>';
+    button.addEventListener("click", () => selectModel(name));
+    els.modelOptions.appendChild(button);
+  });
+  refreshIcons();
+  els.modelLabel.textContent = state.model;
+}
+function selectModel(name) {
+  if (!name) return;
+  state.model = name;
+  renderModelOptions();
+  setModelPopoverOpen(false);
+  showToast(`已切换到 ${name}`);
+}
+function setModelPopoverOpen(open) {
+  els.modelPopover.classList.toggle("hidden", !open);
+  els.modelButton.setAttribute("aria-expanded", String(open));
+  if (open) positionModelPopover();
+}
+function positionModelPopover() {
+  const rect = els.modelButton.getBoundingClientRect();
+  const popup = els.modelPopover;
+  popup.style.visibility = "hidden";
+  popup.classList.remove("hidden");
+  const popupRect = popup.getBoundingClientRect();
+  let left = rect.left;
+  const maxLeft = window.innerWidth - popupRect.width - 10;
+  left = Math.max(10, Math.min(left, maxLeft));
+  let top = rect.top - popupRect.height - 10;
+  if (top < 10) top = rect.bottom + 10;
+  popup.style.left = left + "px";
+  popup.style.top = top + "px";
+  popup.style.visibility = "";
+}
+function toggleModelPopover() {
+  setModelPopoverOpen(els.modelPopover.classList.contains("hidden"));
+}
+window.addEventListener("resize", () => {
+  if (!els.modePopover.classList.contains("hidden")) positionModePopover();
+  if (!els.settingsPopover.classList.contains("hidden")) positionSettingsPopover();
+  if (!els.modelPopover.classList.contains("hidden")) positionModelPopover();
+  closeAllMenus();
+});
 els.resolution.addEventListener("change", () => {
   state.resolution = els.resolution.value;
   if (state.linkSize) syncDimensionsFromRatio();
@@ -1872,6 +2887,7 @@ els.authModal.addEventListener("click", (event) => {
   if (event.target.matches("[data-auth-close]")) closeAuthModal();
 });
 els.newConversation.addEventListener("click", openNewConversation);
+els.newProject?.addEventListener("click", addProject);
 els.mobileNewConversation.addEventListener("click", openNewConversation);
 els.mobileHistory?.addEventListener("click", () => {
   const open = document.querySelector(".sidebar")?.classList.contains("mobile-open");
@@ -1894,7 +2910,7 @@ els.confirmAction.addEventListener("click", async () => {
     confirmNeedsSecondStep = false;
     els.confirmTitle.textContent = "再次确认删除？";
     els.confirmText.textContent =
-      "这是最后一步，确认后将永久删除该对话及其中的全部图片。";
+      "这是最后一步，确认后将永久删除所选内容，且无法恢复。";
     els.confirmAction.textContent = "永久删除";
     return;
   }
@@ -1919,11 +2935,34 @@ async function checkHealth() {
     els.connection.innerHTML = '<span class="dot bad"></span>服务未连接';
   }
 }
+async function loadModels() {
+  try {
+    const response = await fetch("/api/models");
+    if (!response.ok) return;
+    const data = await response.json();
+    if (Array.isArray(data.available) && data.available.length) {
+      state.availableModels = data.available;
+      // 若当前模型不在服务端白名单中，回退到服务端默认值。
+      if (!data.available.includes(state.model)) {
+        state.model = data.default || data.available[0];
+      }
+      renderModelOptions();
+    }
+  } catch (error) {
+    // 模型列表不可用时保留默认值，不打断页面初始化。
+    console.warn("加载模型列表失败：", error);
+  }
+}
+
 async function init() {
   try {
+    // 先恢复项目层，再把历史对话迁移到默认项目，最后才是会话列表。
+    state.projects = sortProjects(await getProjects());
     state.conversations = sortConversations(await getConversations());
+    await migrateConversationsToProjects();
+    await ensureProject();
     if (!state.conversations.length) {
-      const legacy = await getLegacyGenerations();
+      const legacy = await readLegacyGenerations();
       if (legacy.length) {
         const conversation = createConversation();
         const sorted = legacy.sort((a, b) => b.createdAt - a.createdAt);
@@ -1942,6 +2981,7 @@ async function init() {
         await saveConversation(conversation);
       }
     }
+    renderProjectList();
     renderConversationList();
     await openNewConversation();
   } catch (error) {
@@ -1950,6 +2990,7 @@ async function init() {
   setRatio(state.ratio);
   updateDimensionPreview();
   await refreshAuthSession();
+  await loadModels();
   checkHealth();
   refreshIcons();
   initAmbientMotion();
