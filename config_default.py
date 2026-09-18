@@ -21,7 +21,8 @@ CORS_ORIGINS: List[str] = []  # 允许跨源访问的来源；留空表示仅同
 MODEL: str = "gpt-image-2"  # 默认模型
 AVAILABLE_MODELS: List[str] = [  # 前端模型切换器可选列表
     "gpt-image-2",
-    "gpt-image-2.5",
+    "gpt-image-2.5-sunburst",
+    "gpt-image-2.5-flare",
 ]
 
 # ---------------------------------------------------------------- 并发

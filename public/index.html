@@ -27,8 +27,16 @@
           <i data-lucide="plus" aria-hidden="true"></i><span>新建对话</span><kbd>⌘ K</kbd>
         </button>
         <div class="sidebar-label">
-          <span>对话记录</span
-          ><span class="conversation-total" id="conversationTotal">0</span>
+          <span>项目</span>
+          <span class="sidebar-label-actions">
+            <span class="conversation-total" id="projectTotal">0</span>
+            <button class="sidebar-add" id="newProject" type="button" aria-label="新建项目" title="新建项目"><i data-lucide="folder-plus" aria-hidden="true"></i></button>
+          </span>
+        </div>
+        <nav class="project-list" id="projectList" aria-label="项目列表"></nav>
+        <div class="sidebar-label">
+          <span class="scope-name" id="projectScope">对话记录</span>
+          <span class="conversation-total" id="conversationTotal">0</span>
         </div>
         <nav
           class="conversation-list"
@@ -291,9 +299,21 @@
       <div class="lightbox-panel">
         <div class="lightbox-toolbar">
           <span id="lightboxTitle">图片预览</span>
-          <button type="button" id="closeLightbox" aria-label="关闭图片预览">
-            <i data-lucide="x" aria-hidden="true"></i>
-          </button>
+          <div class="lightbox-toolbar-actions">
+            <a
+              class="lightbox-download"
+              id="lightboxDownload"
+              download
+              aria-label="下载当前图片"
+              title="下载图片"
+            >
+              <i data-lucide="download" aria-hidden="true"></i>
+              <span>下载</span>
+            </a>
+            <button type="button" id="closeLightbox" aria-label="关闭图片预览">
+              <i data-lucide="x" aria-hidden="true"></i>
+            </button>
+          </div>
         </div>
         <button
           class="lightbox-nav lightbox-prev"
@@ -332,7 +352,7 @@
         </button>
       </div>
       <p class="mode-popover-desc">
-        默认模式会根据是否上传参考图，自动选择文生图或图生图；角色三视图需 1 张参考图。
+        默认模式会根据是否上传参考图，自动选择文生图或图生图；角色三视图与场景多视角均需 1 张参考图。
       </p>
       <div class="mode-options" aria-label="模式选项">
         <button type="button" class="mode-option active" data-mode="default">
@@ -366,6 +386,18 @@
           <span class="mode-option-copy">
             <span class="mode-option-title">角色三视图</span>
             <span class="mode-option-desc">需 1 张参考图生成三视图</span>
+          </span>
+          <span class="mode-option-state" aria-hidden="true">
+            <i data-lucide="circle"></i>
+          </span>
+        </button>
+        <button type="button" class="mode-option" data-mode="sceneMultiView">
+          <span class="mode-option-icon" aria-hidden="true">
+            <i data-lucide="layout-grid"></i>
+          </span>
+          <span class="mode-option-copy">
+            <span class="mode-option-title">场景多视角</span>
+            <span class="mode-option-desc">需 1 张参考图生成 2×2 场景视角</span>
           </span>
           <span class="mode-option-state" aria-hidden="true">
             <i data-lucide="circle"></i>

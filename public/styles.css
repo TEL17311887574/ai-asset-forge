@@ -59,6 +59,7 @@ button {
   display: flex;
   flex: 0 0 252px;
   flex-direction: column;
+  max-width: 252px;
   padding: 26px 15px 18px;
 }
 .sidebar-brand,
@@ -139,6 +140,143 @@ button {
 }
 .conversation-total {
   color: var(--muted);
+}
+/* ---------------------------------------------------------------- 项目层 */
+.sidebar-label-actions {
+  align-items: center;
+  display: flex;
+  gap: 7px;
+}
+.sidebar-add {
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: var(--muted);
+  padding: 2px;
+}
+.sidebar-add:hover {
+  background: #282c28;
+  color: var(--text);
+}
+.sidebar-add .lucide {
+  height: 12px;
+  width: 12px;
+}
+.scope-name {
+  color: var(--muted);
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
+}
+.project-list {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 10px;
+  max-height: 32vh;
+  overflow: auto;
+  padding-right: 1px;
+}
+.project-list::-webkit-scrollbar {
+  width: 4px;
+}
+.project-list::-webkit-scrollbar-thumb {
+  background: var(--line-light);
+  border-radius: 5px;
+}
+.project-item {
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #a9b0a9;
+  cursor: pointer;
+  display: flex;
+  font-size: 12px;
+  gap: 7px;
+  min-height: 32px;
+  padding: 5px 7px 5px 9px;
+  position: relative;
+  transition: background 0.15s, color 0.15s;
+}
+.project-item:hover {
+  background: #1f221e;
+  color: var(--text);
+}
+.project-item.active {
+  background: #262b26;
+  border-color: #343934;
+  color: var(--text);
+}
+.project-item-icon {
+  color: var(--faint);
+  flex: 0 0 auto;
+}
+.project-item-icon .lucide {
+  height: 13px;
+  width: 13px;
+}
+.project-item-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-item-count {
+  color: var(--faint);
+  font: 9px "DM Mono", monospace;
+}
+.project-menu-trigger {
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 14px;
+  opacity: 0;
+  padding: 3px 4px;
+}
+.project-item:hover .project-menu-trigger,
+.project-menu-trigger:focus {
+  opacity: 1;
+}
+.project-menu {
+  background: #292c29;
+  border: 1px solid var(--line-light);
+  border-radius: 8px;
+  box-shadow: 0 13px 35px #0008;
+  display: flex;
+  flex-direction: column;
+  min-width: 138px;
+  padding: 4px;
+  position: fixed;
+  /* JS 打开时按触发按钮的视口坐标写入这两个变量。 */
+  left: var(--project-menu-x, 0);
+  top: var(--project-menu-y, 0);
+  z-index: 30;
+}
+.project-menu button {
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: #d9ddd8;
+  font-size: 11px;
+  padding: 8px 9px;
+  text-align: left;
+}
+.project-menu button:hover {
+  background: #383c38;
+}
+.project-menu .delete-option {
+  color: #ffad96;
+}
+.conversation-list-empty {
+  color: var(--faint);
+  font: 10px "DM Mono", monospace;
+  padding: 10px 9px;
+  text-align: center;
 }
 .conversation-list {
   display: flex;
@@ -261,9 +399,10 @@ button {
   flex-direction: column;
   min-width: 125px;
   padding: 4px;
-  position: absolute;
-  right: 7px;
-  top: 35px;
+  position: fixed;
+  /* JS 打开时按触发按钮的视口坐标写入这两个变量。 */
+  left: var(--conversation-menu-x, 0);
+  top: var(--conversation-menu-y, 0);
   z-index: 30;
 }
 .conversation-menu button {
@@ -614,26 +753,107 @@ button {
   object-fit: contain;
   width: 100%;
 }
-.generated-download {
+.generated-download,
+.generated-use-reference,
+.generated-split-grid {
   align-items: center;
-  background: #1113;
-  border: 1px solid #fff4;
+  background: #1116;
+  border: 1px solid #fff5;
   border-radius: 6px;
   color: #fff;
+  cursor: pointer;
   display: flex;
   font-size: 15px;
   height: 30px;
   justify-content: center;
-  opacity: 0;
   position: absolute;
   right: 7px;
   text-decoration: none;
   top: 7px;
-  transition: opacity 0.15s;
+  transition: background 0.15s, border-color 0.15s;
   width: 30px;
 }
-.generated-image-wrap:hover .generated-download {
-  opacity: 1;
+.generated-use-reference {
+  right: 45px;
+}
+.generated-split-grid {
+  right: 83px;
+}
+/* 生成图上的操作按钮常驻显示，不再依赖鼠标悬停。 */
+.generated-download:hover,
+.generated-use-reference:hover,
+.generated-split-grid:hover {
+  background: #1119;
+  border-color: #fff9;
+}
+.generated-download:focus-visible,
+.generated-use-reference:focus-visible,
+.generated-split-grid:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+.split-grid-images {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.split-image-wrap {
+  background: #fff0;
+}
+.split-grid-accordion {
+  margin: 0 0 10px;
+  max-width: 760px;
+}
+.split-grid-item {
+  margin-bottom: 7px;
+}
+.split-grid-toggle {
+  align-items: center;
+  background: #212420;
+  border: 1px solid #30332f;
+  border-radius: 6px;
+  color: #aeb8a7;
+  display: flex;
+  font-size: 12px;
+  font-weight: 600;
+  gap: 7px;
+  justify-content: space-between;
+  margin-bottom: 7px;
+  padding: 9px 11px;
+  transition: background 0.15s, border-color 0.15s;
+  width: 100%;
+}
+.split-grid-toggle:hover {
+  background: #282b27;
+  border-color: #3a3d39;
+}
+.split-grid-toggle .lucide {
+  height: 14px;
+  transition: transform 0.28s ease;
+  width: 14px;
+}
+.split-grid-item[data-split-open="true"] .split-grid-toggle .lucide {
+  transform: rotate(180deg);
+}
+.split-grid-panel {
+  overflow: hidden;
+  transition: height 0.28s ease;
+}
+.split-grid-panel.collapsed {
+  height: 0;
+}
+.split-grid-content {
+  padding-bottom: 2px;
+}
+.split-result-title {
+  color: #aeb8a7;
+  font-size: 12px;
+  margin: 4px 0 7px;
+}
+.split-use-reference {
+  /* 与主图操作按钮保持相同的 8px 间隙。 */
+  right: 45px;
+}
+.split-download {
+  right: 7px;
 }
 .generation-actions {
   display: flex;
@@ -1218,6 +1438,7 @@ button {
   gap: 7px;
   margin-bottom: 8px;
   padding: 0 0 9px;
+  padding-top: 7px;
 }
 .attachment-thumb {
   border: 1px solid #475044;
@@ -1996,7 +2217,8 @@ body.mask-modal-open {
     min-height: 100vh;
   }
   .sidebar {
-    flex-basis: 220px;
+    flex: 0 0 220px;
+    max-width: 220px;
   }
   .topbar {
     padding: 0 20px;
@@ -2294,8 +2516,15 @@ body.cursor-active .cursor-ring {
 .sidebar {
   background: linear-gradient(180deg, #141b15 0%, #0d120e 100%);
   border-right-color: #263129;
-  flex-basis: 264px;
+  flex: 0 0 264px;
+  max-width: 264px;
   padding: 30px 18px 20px;
+}
+
+.conversation-item-title,
+.project-item-title,
+.scope-name {
+  min-width: 0;
 }
 
 .sidebar-brand,
@@ -2790,8 +3019,16 @@ body.cursor-active .cursor-ring {
 }
 
 .prompt-input-wrap .prompt-editor {
+  flex: 1 1 auto;
   font-size: 13px;
+  min-width: 0;
   min-height: 45px;
+}
+
+/* 输入框自动换行：允许在任意字符处断行（中文长串/URL 均可换行，不出现横向滚动）。 */
+.prompt-editor {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .prompt-input-wrap .prompt-editor:empty::before {
@@ -3034,6 +3271,34 @@ body.cursor-active .cursor-ring {
   color: var(--accent-ink);
   transform: scale(1.06);
 }
+.lightbox-toolbar-actions {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+.lightbox-download {
+  align-items: center;
+  background: #263328;
+  border: 1px solid #485748;
+  border-radius: 999px;
+  color: var(--text);
+  display: inline-flex;
+  font-size: 12px;
+  gap: 6px;
+  height: 40px;
+  padding: 0 16px;
+  text-decoration: none;
+  transition: background 220ms var(--ease-out), transform 220ms var(--ease-out);
+}
+.lightbox-download:hover {
+  background: var(--accent);
+  color: var(--accent-ink);
+  transform: scale(1.04);
+}
+.lightbox-download .lucide {
+  height: 16px;
+  width: 16px;
+}
 .lightbox-figure {
   align-items: center;
   display: flex;
@@ -3190,6 +3455,7 @@ body.lightbox-open {
     display: flex;
     height: 100svh;
     left: 0;
+    max-width: min(290px, 86vw);
     position: fixed;
     top: 0;
     transform: translateX(-105%);
@@ -3255,6 +3521,14 @@ input[type="url"] {
 
 .conversation-item {
   font-size: 13px;
+}
+
+.project-item {
+  font-size: 13px;
+}
+
+.project-item-count {
+  font-size: 10px;
 }
 
 .conversation-item-time {
@@ -4257,4 +4531,77 @@ input[type="url"] {
   .toolbar-right #promptCount {
     display: none;
   }
+}
+
+/* ---------------------------------------------------------------- 主区高度适配
+   topbar、会话区和输入区都作为 main-stage 的 flex 子项参与布局；
+   输入区高度变化时向上压缩会话区，而不是继续悬浮遮挡历史内容。 */
+.main-stage {
+  min-height: 0;
+}
+
+.conversation-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-bottom: 24px;
+}
+
+.composer-wrap {
+  inset: auto;
+  position: relative;
+  flex: 0 0 auto;
+  z-index: 10;
+}
+
+/* 参考图较多时在输入区内滚动，避免整个输入区吃掉会话区高度。 */
+.composer-attachments {
+  max-height: 150px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* 输入区内两处可滚动区域（提示词编辑器、参考图缩略图）的滚动条
+   与项目其余部分保持一致：细轨道 + 圆角灰色滑块，Firefox 走 thin。 */
+.prompt-editor,
+.composer-attachments {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-light) transparent;
+}
+
+.prompt-editor::-webkit-scrollbar,
+.composer-attachments::-webkit-scrollbar {
+  width: 4px;
+}
+
+.prompt-editor::-webkit-scrollbar-track,
+.composer-attachments::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.prompt-editor::-webkit-scrollbar-thumb,
+.composer-attachments::-webkit-scrollbar-thumb {
+  background: var(--line-light);
+  border-radius: 5px;
+}
+
+.prompt-editor::-webkit-scrollbar-thumb:hover,
+.composer-attachments::-webkit-scrollbar-thumb:hover {
+  background: var(--faint);
+}
+
+/* 角色三视图只允许宽幅比例；禁用按钮需要压低交互反馈，避免看起来仍可选。 */
+.ratio-option:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.ratio-option:disabled:hover {
+  transform: none;
+  background: #222d24;
+  border-color: #333f31;
+}
+
+.settings-popover .ratio-option:disabled:hover {
+  background: #1d261e;
 }

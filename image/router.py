@@ -1,15 +1,16 @@
 """图片生成与编辑接口。"""
 
-from typing import Annotated, List, Optional, Union
+from typing import Annotated
 
 from fastapi import APIRouter, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 from loguru import logger
 
-from auth.session import create_openai_client
+from auth.session import create_openai_client, get_session
 from image.schema import GenerateRequest
 from image.service import (
     build_character_turnaround_prompt,
+    build_scene_multi_view_prompt,
     clean_prompt,
     edit_image,
     generate_image,
@@ -17,11 +18,11 @@ from image.service import (
     read_image_files,
     safe_count,
     safe_input_fidelity,
-    safe_model,
+    safe_optional_prompt,
     safe_quality,
     safe_size,
 )
-
+from image.splitter import split_grid_image
 
 router = APIRouter()
 
@@ -75,30 +76,35 @@ async def generate(request: Request, payload: GenerateRequest):
 @router.post("/edit")
 async def edit(
     request: Request,
-    images: Annotated[List[UploadFile], Form(alias="image")],
+    images: Annotated[list[UploadFile], Form(alias="image")],
     prompt: Annotated[str, Form()],
     size: Annotated[str, Form()] = "1024x1024",
     quality: Annotated[str, Form()] = "medium",
-    n: Annotated[Union[int, str], Form()] = 1,
+    n: Annotated[int | str, Form()] = 1,
     mode: Annotated[str, Form()] = "edit",
-    model: Annotated[Optional[str], Form()] = None,
+    model: Annotated[str | None, Form()] = None,
     input_fidelity: Annotated[str, Form()] = "low",
-    mask: Annotated[Optional[UploadFile], Form()] = None,
+    mask: Annotated[UploadFile | None, Form()] = None,
 ):
-    """图生图接口：基于原图和提示词进行编辑、蒙版或角色三视图生成。
+    """图生图接口：基于原图和提示词进行编辑、蒙版或单参考图预设模式生成。
 
-    当 ``mode="characterTurnaround"`` 时，后端会自动把 prompts/ 目录下的
-    角色三视图模板与用户输入拼接，前端只需提交用户自己的描述。
+    当 ``mode="characterTurnaround"`` 或 ``mode="sceneMultiView"`` 时，后端会
+    自动把 prompts/ 目录下的对应模板与用户输入拼接，前端只需提交用户自己的描述。
     """
     try:
         client = create_openai_client(request)
         image_data = await read_image_files(images)
 
-        final_prompt = (
-            build_character_turnaround_prompt(prompt)
-            if mode == "characterTurnaround"
-            else clean_prompt(prompt)
-        )
+        if mode == "characterTurnaround":
+            final_prompt = build_character_turnaround_prompt(
+                safe_optional_prompt(prompt)
+            )
+        elif mode == "sceneMultiView":
+            final_prompt = build_scene_multi_view_prompt(
+                safe_optional_prompt(prompt)
+            )
+        else:
+            final_prompt = clean_prompt(prompt)
 
         mask_data = await mask.read() if mask else None
         images_result = await edit_image(
@@ -115,3 +121,24 @@ async def edit(
         return {"images": images_result}
     except Exception as exc:  # noqa: BLE001 - 统一兜底为 JSON 响应
         return error_response(exc, "edit")
+
+
+@router.post("/split-grid")
+async def split_grid(
+    request: Request,
+    image: Annotated[UploadFile, Form()],
+):
+    """把带白色网格线的 2×2 宫格图拆分为四张图片。"""
+    try:
+        if not get_session(request):
+            raise HTTPException(status_code=401, detail="未登录或会话已失效。")
+        image_data = await image.read()
+        tiles = split_grid_image(image_data)
+        return {
+            "images": [
+                {"dataUrl": data_url, "name": filename}
+                for data_url, filename in tiles
+            ]
+        }
+    except Exception as exc:  # noqa: BLE001 - 统一兜底为 JSON 响应
+        return error_response(exc, "split-grid")

@@ -5,6 +5,8 @@ import io
 import re
 from typing import BinaryIO, Dict, List, Optional, Union
 
+from loguru import logger
+
 from fastapi import HTTPException, UploadFile
 from openai import APIError, AsyncOpenAI
 
@@ -51,6 +53,7 @@ def clean_prompt(text: str) -> str:
 
 # 预设提示词模板在 prompts/ 目录下维护，后端是唯一事实来源。
 _TURNAROUND_TEMPLATE = "character_turnaround.txt"
+_SCENE_MULTI_VIEW_TEMPLATE = "scene_multiview.txt"
 
 
 def load_prompt_template(filename: str) -> str:
@@ -72,6 +75,31 @@ def build_character_turnaround_prompt(user_prompt: str) -> str:
     """
     parts = [user_prompt.strip(), load_prompt_template(_TURNAROUND_TEMPLATE)]
     return "\n\n".join(part for part in parts if part)
+
+
+def safe_optional_prompt(text: str) -> str:
+    """清理可空提示词：特殊预设模式允许只传参考图。"""
+    if not isinstance(text, str):
+        return ""
+    return text.strip()
+
+
+def build_scene_multi_view_prompt(user_prompt: str) -> str:
+    """把用户补充描述与场景多视角模板拼接为最终提示词。"""
+    parts = [user_prompt.strip(), load_prompt_template(_SCENE_MULTI_VIEW_TEMPLATE)]
+    return "\n\n".join(part for part in parts if part)
+
+
+def _summarize_upload(
+    upload: Union[BinaryIO, List[BinaryIO]],
+) -> Union[Dict[str, object], List[Dict[str, object]]]:
+    """把上传文件参数转成可读日志，避免把二进制内容写进终端。"""
+    if isinstance(upload, list):
+        return [_summarize_upload(item) for item in upload]
+    return {
+        "name": getattr(upload, "name", "upload"),
+        "type": type(upload).__name__,
+    }
 
 
 def safe_size(value: Optional[str]) -> str:
@@ -172,14 +200,17 @@ async def generate_image(
     处理其它请求，这是并发能力的关键。
     """
     async with _get_generation_semaphore():
-        response = await client.images.generate(
-            model=safe_model(model),
-            prompt=prompt,
-            size=size,
-            quality=quality,
-            n=n,
-            response_format="b64_json",
-        )
+        params: Dict[str, object] = {
+            "model": safe_model(model),
+            "prompt": prompt,
+            "size": size,
+            "quality": quality,
+            "n": n,
+            "response_format": "b64_json",
+        }
+        # 调用三方接口前把实际参数打印到终端，便于本地排查生成请求。
+        logger.info("[OpenAI images.generate] params={}", params)
+        response = await client.images.generate(**params)
         return _image_response(response)
 
 
@@ -218,6 +249,15 @@ async def edit_image(
     # "Expected entry at `mask` to be bytes..." 的 RuntimeError。
     if mask:
         payload["mask"] = to_openai_file(mask, "mask.png")
+
+    log_payload = {
+        **payload,
+        "image": _summarize_upload(payload["image"]),
+    }
+    if "mask" in log_payload:
+        log_payload["mask"] = _summarize_upload(log_payload["mask"])
+    # 调用三方接口前把实际参数打印到终端；文件参数仅记录名称和类型。
+    logger.info("[OpenAI images.edit] params={}", log_payload)
 
     async with _get_generation_semaphore():
         response = await client.images.edit(**payload)

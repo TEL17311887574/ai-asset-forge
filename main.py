@@ -110,4 +110,4 @@ async def _shutdown() -> None:
 
 if __name__ == "__main__":
     # 服务参数直接写死，避免与配置文件产生第二处事实来源。
-    uvicorn.run("main:app", host="0.0.0.0", port=3000, reload=True, workers=1)
+    uvicorn.run("main:app", host="0.0.0.0", port=3000, reload=True)
