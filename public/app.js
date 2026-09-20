@@ -73,7 +73,9 @@ const state = {
   mode: "default",
   sourceFiles: [],
   maskFile: null,
-  busy: false,
+  // 每一条生成消息都是独立任务；切换项目/对话不会中断其它任务。
+  generationTasks: new Map(),
+  conversationSaveQueues: new Map(),
   ratio: "1:1",
   resolution: "1K",
   quality: "medium",
@@ -805,6 +807,26 @@ async function migrateConversationsToProjects() {
     }),
   );
   state.projects = sortProjects(state.projects);
+}
+
+async function recoverInterruptedGenerations() {
+  const interrupted = [];
+  state.conversations.forEach((conversation) => {
+    conversation.messages?.forEach((message) => {
+      if (message.role === "generation" && message.status === "loading") {
+        message.status = "error";
+        message.error = "页面刷新导致这次生成中断，请重新生成。";
+        message.completedAt = Date.now();
+        message.unread = false;
+        interrupted.push(conversation);
+      }
+    });
+  });
+  await Promise.all(
+    [...new Set(interrupted)].map((conversation) =>
+      saveConversation(conversation, { touchUpdatedAt: false }),
+    ),
+  );
 }
 
 function activeProject() {
@@ -1661,16 +1683,70 @@ function createConversation(projectId = state.activeProjectId) {
     messages: [],
   };
 }
-async function saveConversation(conversation) {
-  conversation.updatedAt = Date.now();
-  await putConversation(conversation);
-  state.conversations = sortConversations(
-    state.conversations
-      .filter((item) => item.id !== conversation.id)
-      .concat(conversation),
-  );
-  renderConversationList();
+async function saveConversation(conversation, options = {}) {
+  if (!conversation?.id) return;
+  const touchUpdatedAt = options.touchUpdatedAt !== false;
+  const previous = state.conversationSaveQueues.get(conversation.id) || Promise.resolve();
+  const next = previous
+    .catch(() => {})
+    .then(async () => {
+      if (touchUpdatedAt) conversation.updatedAt = Date.now();
+      await putConversation(conversation);
+      state.conversations = sortConversations(
+        state.conversations
+          .filter((item) => item.id !== conversation.id)
+          .concat(conversation),
+      );
+      renderConversationList();
+    });
+  state.conversationSaveQueues.set(conversation.id, next);
+  try {
+    await next;
+  } finally {
+    if (state.conversationSaveQueues.get(conversation.id) === next)
+      state.conversationSaveQueues.delete(conversation.id);
+  }
 }
+
+function conversationActivity(conversation) {
+  const messages = conversation?.messages || [];
+  return {
+    loading: messages.some(
+      (message) => message.role === "generation" && message.status === "loading",
+    ),
+    unread: messages.some(
+      (message) =>
+        message.role === "generation" &&
+        message.status === "done" &&
+        message.unread === true,
+    ),
+  };
+}
+
+function projectActivity(projectId) {
+  return state.conversations
+    .filter((conversation) => conversation.projectId === projectId)
+    .reduce(
+      (activity, conversation) => {
+        const current = conversationActivity(conversation);
+        activity.loading ||= current.loading;
+        activity.unread ||= current.unread;
+        return activity;
+      },
+      { loading: false, unread: false },
+    );
+}
+
+function appendActivityIndicator(parent, activity, { hidden = false } = {}) {
+  if (hidden || (!activity.loading && !activity.unread)) return null;
+  const indicator = document.createElement("span");
+  indicator.className = `activity-indicator ${activity.loading ? "loading" : "unread"}`;
+  indicator.setAttribute("aria-label", activity.loading ? "正在生成图片" : "有新的生成结果");
+  indicator.title = activity.loading ? "正在生成图片" : "有新的生成结果";
+  if (parent) parent.append(indicator);
+  return indicator;
+}
+
 function renderConversationList() {
   document.querySelectorAll(".conversation-menu").forEach((menu) => menu.remove());
   els.conversationList.replaceChildren();
@@ -1732,6 +1808,7 @@ function renderConversationList() {
     const time = document.createElement("span");
     time.className = "conversation-item-time";
     time.textContent = dateLabel(conversation.updatedAt);
+    const activityIndicator = appendActivityIndicator(null, conversationActivity(conversation));
     const trigger = document.createElement("button");
     trigger.className = "conversation-menu-trigger";
     trigger.type = "button";
@@ -1809,7 +1886,7 @@ function renderConversationList() {
       item.classList.toggle("menu-open", willOpen);
     });
     menu.append(pin, rename, del);
-    item.append(leading, title, time, trigger, menu);
+    item.append(...[leading, title, time, activityIndicator, trigger, menu].filter(Boolean));
     item.addEventListener("click", () => {
       closeAllMenus();
       openConversation(conversation.id);
@@ -1851,6 +1928,10 @@ function renderProjectList() {
     const count = document.createElement("span");
     count.className = "project-item-count";
     count.textContent = String(conversationsInProject(project.id).length);
+    // 当前项目的生成状态由其下的对话行展示；未激活项目才在项目行显示状态。
+    const activityIndicator = appendActivityIndicator(null, projectActivity(project.id), {
+      hidden: project.id === state.activeProjectId,
+    });
     const trigger = document.createElement("button");
     trigger.className = "project-menu-trigger";
     trigger.type = "button";
@@ -1909,7 +1990,7 @@ function renderProjectList() {
       item.classList.toggle("menu-open", willOpen);
     });
     menu.append(rename, addChat, del);
-    item.append(icon, title, count, trigger, menu);
+    item.append(...[icon, title, count, activityIndicator, trigger, menu].filter(Boolean));
     item.addEventListener("click", () => {
       closeAllMenus();
       selectProject(project.id);
@@ -2094,6 +2175,14 @@ async function openConversation(id) {
     renderProjectList();
   }
   state.activeConversationId = id;
+  let hasUnread = false;
+  conversation.messages.forEach((message) => {
+    if (message.role === "generation" && message.unread === true) {
+      message.unread = false;
+      hasUnread = true;
+    }
+  });
+  if (hasUnread) await saveConversation(conversation, { touchUpdatedAt: false });
   state.sourceFiles = [];
   state.pendingMentions = [];
   state.mentionCursor = -1;
@@ -2331,7 +2420,6 @@ function regenerateMessage(message) {
   submitGeneration();
 }
 async function submitGeneration() {
-  if (state.busy) return;
   if (!state.authenticated) {
     openAuthModal();
     return showToast("请先登录，再开始生成", "error");
@@ -2372,6 +2460,7 @@ async function submitGeneration() {
     width: dimensions.width,
     height: dimensions.height,
     size: `${dimensions.width}x${dimensions.height}`,
+    inputFidelity: Boolean(els.fidelity.checked),
     mentionIndexes: state.pendingMentions.map((mention) => mention.index),
     references: getReferences(),
     createdAt: Date.now(),
@@ -2387,6 +2476,7 @@ async function submitGeneration() {
     role: "generation",
     ...settings,
     status: "loading",
+    unread: false,
     images: [],
   };
   conversation.messages.push(userMessage, generation);
@@ -2394,54 +2484,57 @@ async function submitGeneration() {
   renderMessage(userMessage);
   renderMessage(generation);
   scrollToBottom();
-  state.busy = true;
-  els.submitButton.disabled = true;
-  els.submitIcon.textContent = "…";
+  const taskId = generation.id;
+  state.generationTasks.set(taskId, { conversationId: conversation.id, projectId: conversation.projectId });
+  renderConversationList();
+  runGenerationTask(conversation, generation, settings, effectiveMode).catch((error) => {
+    // runGenerationTask 内部已把请求错误写入消息；这里只兜底异步异常。
+    console.error("生成任务异常", error);
+  });
+}
+
+async function runGenerationTask(conversation, generation, settings, effectiveMode) {
+  const taskId = generation.id;
   try {
     let response;
-    if (effectiveMode === "generate")
+    if (effectiveMode === "generate") {
       response = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          prompt,
+          prompt: settings.prompt,
           size: settings.size,
           quality: settings.quality,
           n: settings.count,
-          model: state.model,
+          model: settings.model,
         }),
       });
-    else {
+    } else {
       const data = new FormData();
-      const sourceFiles = await Promise.all(
-        state.sourceFiles.map(toUploadFile),
-      );
+      // 使用提交时的引用快照，切换对话/继续上传不会影响后台任务。
+      const sourceFiles = await Promise.all(settings.references.map(toUploadFile));
       sourceFiles.forEach((file) =>
         data.append("image", file, file.name || `image-${Date.now()}.png`),
       );
       Object.entries({
-        prompt,
+        prompt: settings.prompt,
         size: settings.size,
         quality: settings.quality,
         n: settings.count,
-        // 后端据此决定是否套用角色三视图模板。
         mode: effectiveMode,
-        model: state.model,
+        model: settings.model,
       }).forEach(([key, value]) => data.append(key, value));
-      if (els.fidelity.checked) data.append("input_fidelity", "high");
+      if (settings.inputFidelity) data.append("input_fidelity", "high");
       if (effectiveMode === "mask") {
-        // Keep the first mask on the legacy field and expose additional masks
-        // as indexed multipart fields for the multi-reference API contract.
-        const blob = dataUrlBlob(state.sourceFiles[0]?.maskDataUrl);
+        const blob = dataUrlBlob(settings.references[0]?.maskDataUrl);
         if (blob) data.append("mask", blob, "mask.png");
-        state.sourceFiles.slice(1).forEach((source, index) => {
+        settings.references.slice(1).forEach((source, index) => {
           const extraMask = dataUrlBlob(source.maskDataUrl);
-          if (extraMask)
-            data.append("mask[]", extraMask, `mask-${index + 2}.png`);
+          if (extraMask) data.append("mask[]", extraMask, `mask-${index + 2}.png`);
         });
         data.append(
           "mask_count",
-          String(state.sourceFiles.filter((source) => source.maskDataUrl).length),
+          String(settings.references.filter((source) => source.maskDataUrl).length),
         );
       }
       response = await fetch("/api/edit", { method: "POST", body: data });
@@ -2452,28 +2545,37 @@ async function submitGeneration() {
       requestError.status = response.status;
       throw requestError;
     }
+    // 用户可能在请求返回前删除了项目/对话；此时不把幽灵结果写回数据库。
+    if (!state.conversations.some((item) => item.id === conversation.id)) return;
     generation.status = "done";
     generation.images = result.images || [];
-    conversation.updatedAt = Date.now();
+    generation.completedAt = Date.now();
+    generation.unread = state.activeConversationId !== conversation.id;
     await saveConversation(conversation);
-    renderConversationMessages(conversation);
+    if (state.activeConversationId === conversation.id)
+      renderConversationMessages(conversation);
   } catch (error) {
+    if (!state.conversations.some((item) => item.id === conversation.id)) return;
     if (error.status === 401) {
       setAuthenticated(false);
       openAuthModal();
     }
     generation.status = "error";
     generation.error = error.message;
+    generation.completedAt = Date.now();
+    generation.unread = state.activeConversationId !== conversation.id;
     await saveConversation(conversation);
-    renderConversationMessages(conversation);
+    if (state.activeConversationId === conversation.id)
+      renderConversationMessages(conversation);
     showToast(error.message, "error");
   } finally {
-    state.busy = false;
-    els.submitButton.disabled = false;
-    els.submitIcon.innerHTML =
-      '<i data-lucide="arrow-up" aria-hidden="true"></i>';
-    refreshIcons();
+    state.generationTasks.delete(taskId);
+    updateGenerationIndicators();
   }
+}
+
+function updateGenerationIndicators() {
+  renderConversationList();
 }
 
 els.form.addEventListener("submit", (event) => {
@@ -2960,6 +3062,7 @@ async function init() {
     state.projects = sortProjects(await getProjects());
     state.conversations = sortConversations(await getConversations());
     await migrateConversationsToProjects();
+    await recoverInterruptedGenerations();
     await ensureProject();
     if (!state.conversations.length) {
       const legacy = await readLegacyGenerations();

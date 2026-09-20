@@ -11,6 +11,7 @@
   --faint: #656b65;
   --accent: #d9f35a;
   --accent-ink: #1e260d;
+  --status-success: #7bc94d;
   --blue: #3bb7ff;
   --warm: #ff8060;
 }
@@ -227,6 +228,34 @@ button {
 .project-item-count {
   color: var(--faint);
   font: 9px "DM Mono", monospace;
+}
+.activity-indicator {
+  display: inline-block;
+  flex: 0 0 auto;
+  height: 9px;
+  margin-left: 2px;
+  width: 9px;
+}
+.project-item .activity-indicator,
+.conversation-item .activity-indicator {
+  margin-left: auto;
+}
+.activity-indicator.loading {
+  animation: activity-spin 0.8s linear infinite;
+  border: 1.5px solid #788277;
+  border-right-color: var(--accent);
+  border-radius: 50%;
+}
+.activity-indicator.unread {
+  background: var(--status-success);
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px #7bc94d22;
+}
+@keyframes activity-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .activity-indicator.loading { animation: none; }
 }
 .project-menu-trigger {
   background: transparent;
