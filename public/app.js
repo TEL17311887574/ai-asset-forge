@@ -410,6 +410,24 @@ function setPromptText(text, mentionIndexes = []) {
   els.prompt.append(fragment);
   syncPendingMentions();
 }
+
+function insertPlainTextAtCursor(text) {
+  const selection = window.getSelection();
+  const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+  const textNode = document.createTextNode(text);
+
+  if (!range || !els.prompt.contains(range.commonAncestorContainer)) {
+    els.prompt.append(textNode);
+    return;
+  }
+
+  range.deleteContents();
+  range.insertNode(textNode);
+  range.setStartAfter(textNode);
+  range.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
 function updateInlineMention(mention, index) {
   mention.dataset.index = String(index);
   mention.setAttribute("aria-label", `图${index + 1}`);
@@ -2382,7 +2400,9 @@ function renderMessage(message) {
   prompt.textContent = message.prompt || "";
   const details = document.createElement("div");
   details.className = "generation-details";
-  details.innerHTML = `<span>GPT Image 2</span><i></i><span>${modeLabels[message.mode] || "图片生成"}</span><i></i><strong>${escapeHtml(message.ratio || "1:1")}</strong><i></i><strong>${escapeHtml(message.size || "1024x1024")}</strong><i></i><span>${escapeHtml(message.resolution || "1K")}</span>`;
+  // 模型是每条生成消息的请求快照，不能使用当前选择值或硬编码名称；否则历史记录会失真。
+  const model = message.model || ACTIVE_IMAGE_MODEL;
+  details.innerHTML = `<span>${escapeHtml(model)}</span><i></i><span>${modeLabels[message.mode] || "图片生成"}</span><i></i><strong>${escapeHtml(message.ratio || "1:1")}</strong><i></i><strong>${escapeHtml(message.size || "1024x1024")}</strong><i></i><span>${escapeHtml(message.resolution || "1K")}</span>`;
   summary.append(prompt, details);
   head.append(refs, summary);
   card.append(head);
@@ -2708,6 +2728,16 @@ els.form.addEventListener("submit", (event) => {
 els.sourceInput.addEventListener("change", (event) => {
   setSourceFiles(event.target.files);
   els.sourceInput.value = "";
+});
+els.prompt.addEventListener("paste", (event) => {
+  // contenteditable 默认会保留来源应用的 HTML/CSS。某些来源给 span 写了
+  // white-space: nowrap，造成文本横向撑开、纵向高度不增长。提示词只需要文本，
+  // 因此统一按纯文本插入，保留换行但不继承外部样式。
+  const text = event.clipboardData?.getData("text/plain");
+  if (text == null) return;
+  event.preventDefault();
+  insertPlainTextAtCursor(text.replace(/\r\n?/g, "\n"));
+  els.prompt.dispatchEvent(new Event("input", { bubbles: true }));
 });
 els.prompt.addEventListener("input", () => {
   syncPendingMentions();

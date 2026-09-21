@@ -1136,6 +1136,8 @@ button {
   min-height: 42px;
   outline: 0;
   padding: 5px 0;
+  /* 编辑器只在内容超出最大高度时纵向滚动，长 URL / 粘贴文本不产生横向滚动条。 */
+  overflow-x: hidden;
   overflow-y: auto;
   white-space: pre-wrap;
   width: 100%;
@@ -2854,17 +2856,51 @@ body.cursor-active .cursor-ring {
   z-index: 1;
 }
 
-.visual-frame img {
-  filter: saturate(0.8) contrast(1.06);
-  height: 100%;
-  object-fit: cover;
+.visual-art {
+  background:
+    radial-gradient(ellipse 42% 25% at 78% 15%, #d8f25c28 0%, transparent 73%),
+    linear-gradient(148deg, transparent 0 39%, #b7cd7247 39.2% 40.2%, transparent 40.5%),
+    linear-gradient(128deg, transparent 0 48%, #e3eeaa13 48.2% 49%, transparent 49.2%),
+    repeating-linear-gradient(108deg, #0f1c151c 0 2px, transparent 2px 29px),
+    linear-gradient(144deg, #14251b 0%, #263b29 43%, #101a14 100%);
+  inset: 0;
+  overflow: hidden;
+  position: absolute;
   transform: scale(1.06);
-  transition: transform 900ms var(--ease-out), filter 900ms var(--ease-out);
-  width: 100%;
+  transition: filter 900ms var(--ease-out), transform 900ms var(--ease-out);
 }
 
-.welcome-visual:hover .visual-frame img {
-  filter: saturate(1) contrast(1.08);
+.visual-art::before,
+.visual-art::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+}
+
+.visual-art::before {
+  background:
+    linear-gradient(90deg, transparent 0 18%, #d8f25c22 18.3% 18.9%, transparent 19.2% 45%, #d8f25c1c 45.3% 45.8%, transparent 46.1%),
+    linear-gradient(#d8f25c18 0 1px, transparent 1px 100%);
+  inset: 11% 7% 9%;
+  opacity: .78;
+  transform: skewY(5deg);
+}
+
+.visual-art::after {
+  background:
+    radial-gradient(ellipse at 24% 75%, #1b311f 0 9%, transparent 10%),
+    radial-gradient(ellipse at 38% 66%, #304b2b 0 12%, transparent 13%),
+    radial-gradient(ellipse at 61% 78%, #203a25 0 13%, transparent 14%);
+  bottom: -13%;
+  filter: blur(4px);
+  height: 46%;
+  left: -8%;
+  opacity: .9;
+  width: 118%;
+}
+
+.welcome-visual:hover .visual-art {
+  filter: brightness(1.12) saturate(1.12);
   transform: scale(1.13);
 }
 
@@ -3059,6 +3095,14 @@ body.cursor-active .cursor-ring {
 .prompt-editor {
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+/* 兜底处理历史或浏览器自动插入的富文本节点，不能让其 nowrap 样式撑宽编辑器。 */
+.prompt-editor :is(span, div, p, pre, code, b, strong, i, em, font) {
+  max-width: 100%;
+  overflow-wrap: anywhere !important;
+  white-space: pre-wrap !important;
+  word-break: break-word !important;
 }
 
 .prompt-input-wrap .prompt-editor:empty::before {
