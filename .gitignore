@@ -3,3 +3,9 @@ __pycache__/
 .idea/
 .auth-secret
 .venv/
+
+# Windows 缩略图缓存（系统自动生成，随时会重建）
+Thumbs.db
+
+# WorkBuddy 项目数据（本地记忆/会话缓存，不入库）
+.workbuddy/

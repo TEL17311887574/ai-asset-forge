@@ -148,36 +148,13 @@ button {
   display: flex;
   gap: 7px;
 }
-.sidebar-add {
-  background: transparent;
-  border: 0;
-  border-radius: 5px;
-  color: var(--muted);
-  padding: 2px;
-}
-.sidebar-add:hover {
-  background: #282c28;
-  color: var(--text);
-}
-.sidebar-add .lucide {
-  height: 12px;
-  width: 12px;
-}
-.scope-name {
-  color: var(--muted);
-  max-width: 150px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  text-transform: none;
-  white-space: nowrap;
-}
+/* 侧栏现在只有这一栏：项目行 + 其下缩进的对话分组，所以它占满剩余高度。 */
 .project-list {
   display: flex;
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 2px;
-  margin-bottom: 10px;
-  max-height: 32vh;
+  min-height: 0;
   overflow: auto;
   padding-right: 1px;
 }
@@ -196,9 +173,9 @@ button {
   cursor: pointer;
   display: flex;
   font-size: 12px;
-  gap: 7px;
+  gap: 6px;
   min-height: 32px;
-  padding: 5px 7px 5px 9px;
+  padding: 5px 7px 5px 6px;
   position: relative;
   transition: background 0.15s, color 0.15s;
 }
@@ -301,27 +278,52 @@ button {
 .project-menu .delete-option {
   color: #ffad96;
 }
+.project-list-empty {
+  color: var(--faint);
+  font: 10px "DM Mono", monospace;
+  padding: 8px 9px;
+  text-align: center;
+}
 .conversation-list-empty {
   color: var(--faint);
   font: 10px "DM Mono", monospace;
   padding: 10px 9px;
   text-align: center;
 }
-.conversation-list {
+/* 项目行左侧的展开箭头：当前激活项目朝下（已摊开），其余朝右。 */
+.project-item-caret {
+  align-items: center;
+  color: var(--faint);
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+.project-item-caret .lucide {
+  height: 12px;
+  width: 12px;
+}
+/* 当前激活项目下面缩进列出的对话，用一条竖线表示从属关系。 */
+.project-conversations {
+  border-left: 1px solid var(--line-light);
   display: flex;
-  flex: 1;
   flex-direction: column;
-  gap: 3px;
-  min-height: 0;
-  overflow: auto;
-  padding-right: 1px;
+  gap: 2px;
+  margin: 1px 0 6px 13px;
+  padding-left: 7px;
+  transition: background 0.15s, border-color 0.15s;
 }
-.conversation-list::-webkit-scrollbar {
-  width: 4px;
+.project-conversations .conversation-item {
+  font-size: 11.5px;
+  min-height: 32px;
+  padding: 5px 7px 5px 8px;
 }
-.conversation-list::-webkit-scrollbar-thumb {
-  background: var(--line-light);
-  border-radius: 5px;
+.project-conversations .conversation-list-empty {
+  padding: 6px 8px;
+  text-align: left;
+}
+.project-conversations.drop-target {
+  background: #24331f;
+  border-color: var(--accent);
+  border-radius: 0 8px 8px 0;
 }
 .conversation-item {
   align-items: center;
@@ -2551,8 +2553,7 @@ body.cursor-active .cursor-ring {
 }
 
 .conversation-item-title,
-.project-item-title,
-.scope-name {
+.project-item-title {
   min-width: 0;
 }
 
@@ -4509,6 +4510,146 @@ input[type="url"] {
   .model-popover:not(.hidden) {
     animation: none;
   }
+}
+
+/* ---------- 项目选择弹层（新建对话绑定项目，对齐 Codex） ---------- */
+/* 已有对话不允许通过胶囊换项目（走拖拽），只在空白草稿态显示。 */
+.composer-wrap.conversation-mode .project-pill {
+  display: none;
+}
+.project-pill #projectLabel {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 已命名但尚未落库的项目：虚线胶囊 + 斜体名，和真实项目区分开。 */
+.project-pill.pending {
+  border-color: #43544066;
+  border-style: dashed;
+  color: var(--muted);
+}
+.project-pill.pending #projectLabel {
+  font-style: italic;
+}
+.project-option.pending {
+  border-style: dashed;
+  cursor: default;
+  opacity: 0.75;
+}
+.project-option.pending:hover {
+  background: #1b211b;
+  border-color: #333d33;
+}
+.project-option.pending .model-option-desc {
+  color: var(--muted);
+}
+.project-popover {
+  width: min(320px, calc(100vw - 20px));
+}
+.project-search {
+  align-items: center;
+  background: #141a14;
+  border: 1px solid #333d33;
+  border-radius: 10px;
+  color: var(--muted);
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+  padding: 8px 10px;
+}
+.project-search .lucide {
+  flex: 0 0 auto;
+  height: 14px;
+  width: 14px;
+}
+.project-search input {
+  background: none;
+  border: none;
+  color: var(--text);
+  flex: 1;
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+  min-width: 0;
+}
+.project-options {
+  max-height: 240px;
+  overflow-y: auto;
+}
+.project-options-empty {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 6px 2px;
+  text-align: center;
+}
+.project-create-toggle {
+  align-items: center;
+  background: none;
+  border: 1px dashed #43544066;
+  border-radius: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  font-size: 13px;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 8px;
+  padding: 10px 12px;
+  transition: border-color 200ms var(--ease-out), color 200ms var(--ease-out);
+  width: 100%;
+}
+.project-create-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.project-create-toggle .lucide {
+  height: 15px;
+  width: 15px;
+}
+.project-create-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.project-create-row input {
+  background: #141a14;
+  border: 1px solid #333d33;
+  border-radius: 10px;
+  color: var(--text);
+  flex: 1;
+  font: inherit;
+  font-size: 13px;
+  min-width: 0;
+  outline: none;
+  padding: 8px 10px;
+}
+.project-create-row input:focus {
+  border-color: var(--accent);
+}
+.project-create-confirm {
+  background: var(--accent);
+  border: none;
+  border-radius: 10px;
+  color: #10130f;
+  cursor: pointer;
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 0 14px;
+}
+
+/* ---------- 对话拖拽移动（拖到项目行换归属） ---------- */
+.conversation-item.dragging {
+  opacity: 0.45;
+}
+.project-item.drop-target {
+  background: #24331f;
+  border-color: var(--accent);
+  color: var(--text);
+}
+.project-item.drop-target .project-item-icon {
+  color: var(--accent);
 }
 
 /* ---------- 布局调整：上传按钮与模式/参数同行（对齐 Codex） ---------- */

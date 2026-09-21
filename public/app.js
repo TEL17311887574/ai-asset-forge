@@ -4,6 +4,8 @@ const DB_VERSION = 3;
 const PROJECT_STORE = "projects";
 const CONVERSATION_STORE = "conversations";
 const LEGACY_STORE = "generations";
+// 对话拖拽移动时写入 dataTransfer 的自定义类型，用来区分其它拖拽（如文件拖入）。
+const CONVERSATION_DRAG_TYPE = "application/x-conversation-id";
 // Keep every model/resolution/ratio combination in one place. If GPT Image
 // 2.5 uses different dimensions later, add another model entry here.
 const MODEL_SIZE_PRESETS = Object.freeze({
@@ -87,6 +89,11 @@ const state = {
   activeConversationId: null,
   projects: [],
   activeProjectId: null,
+  // 空白草稿待绑定的项目：新建对话后由项目胶囊选择，发出首条消息时落库。
+  draftProjectId: null,
+  // 草稿态「尚未创建」的项目名：在浮层里输入名称回车只是记下名字，
+  // 项目本身要等首条消息发出时才真正建库，避免留下空项目。
+  draftProjectTitle: null,
   pendingMentions: [],
   mentionCursor: -1,
   mentionRange: null,
@@ -158,10 +165,16 @@ const els = {
   composerWrap: $("#composerWrap"),
   projectList: $("#projectList"),
   projectTotal: $("#projectTotal"),
-  projectScope: $("#projectScope"),
-  newProject: $("#newProject"),
-  conversationList: $("#conversationList"),
-  conversationTotal: $("#conversationTotal"),
+  projectButton: $("#projectButton"),
+  projectLabel: $("#projectLabel"),
+  projectPopover: $("#projectPopover"),
+  projectOptions: $("#projectOptions"),
+  projectSearchInput: $("#projectSearchInput"),
+  closeProject: $("#closeProject"),
+  projectCreateToggle: $("#projectCreateToggle"),
+  projectCreateRow: $("#projectCreateRow"),
+  projectCreateInput: $("#projectCreateInput"),
+  projectCreateConfirm: $("#projectCreateConfirm"),
   conversationTitle: $("#conversationTitle"),
   newConversation: $("#newConversation"),
   mobileNewConversation: $("#mobileNewConversation"),
@@ -1747,25 +1760,18 @@ function appendActivityIndicator(parent, activity, { hidden = false } = {}) {
   return indicator;
 }
 
-function renderConversationList() {
+/** 把一组对话渲染进指定容器；侧栏里每个项目分组共用这一份构建逻辑。 */
+function renderConversationItems(container, conversations) {
   document.querySelectorAll(".conversation-menu").forEach((menu) => menu.remove());
-  els.conversationList.replaceChildren();
-  const visible = state.activeProjectId
-    ? conversationsInProject(state.activeProjectId)
-    : state.conversations;
-  els.conversationTotal.textContent = visible.length;
-  if (els.projectScope)
-    els.projectScope.textContent = activeProject()?.title || "全部对话";
-  if (!visible.length) {
+  container.replaceChildren();
+  if (!conversations.length) {
     const empty = document.createElement("p");
     empty.className = "conversation-list-empty";
-    empty.textContent = "还没有对话，点上面「新建对话」开始。";
-    els.conversationList.append(empty);
-    renderProjectList();
-    refreshIcons();
+    empty.textContent = "这个项目还没有对话。";
+    container.append(empty);
     return;
   }
-  visible.forEach((conversation) => {
+  conversations.forEach((conversation) => {
     const item = document.createElement("div");
     item.setAttribute("role", "button");
     item.tabIndex = 0;
@@ -1892,6 +1898,20 @@ function renderConversationList() {
       openConversation(conversation.id);
       closeMobileHistory();
     });
+    // 对话可拖拽到上方任意项目，完成跨项目移动（触屏不支持，属预期）。
+    item.draggable = true;
+    item.addEventListener("dragstart", (event) => {
+      closeAllMenus();
+      event.dataTransfer.setData(CONVERSATION_DRAG_TYPE, conversation.id);
+      event.dataTransfer.effectAllowed = "move";
+      item.classList.add("dragging");
+    });
+    item.addEventListener("dragend", () => {
+      item.classList.remove("dragging");
+      document
+        .querySelectorAll(".project-item.drop-target")
+        .forEach((target) => target.classList.remove("drop-target"));
+    });
     item.addEventListener("keydown", (event) => {
       if (event.target !== item) return;
       if (event.key === "Enter" || event.key === " ") {
@@ -1899,10 +1919,16 @@ function renderConversationList() {
         item.click();
       }
     });
-    els.conversationList.append(item);
+    container.append(item);
   });
+}
+
+/**
+ * 侧栏渲染入口：对话已经内嵌进各自的项目分组，不再有独立的「对话记录」栏，
+ * 所以这里等价于重渲染一次项目列表。保留函数名，既有调用点无需改动。
+ */
+function renderConversationList() {
   renderProjectList();
-  refreshIcons();
 }
 
 /* ---------------------------------------------------------------- 项目 UI */
@@ -1912,6 +1938,16 @@ function renderProjectList() {
   document.querySelectorAll(".project-menu").forEach((menu) => menu.remove());
   els.projectList.replaceChildren();
   if (els.projectTotal) els.projectTotal.textContent = state.projects.length;
+  if (!state.projects.length) {
+    // 项目列表允许为空（不再自动创建「默认项目」），给一行淡提示收住版面。
+    const empty = document.createElement("p");
+    empty.className = "project-list-empty";
+    empty.textContent = "还没有项目";
+    els.projectList.append(empty);
+    updateProjectPill();
+    refreshIcons();
+    return;
+  }
   state.projects.forEach((project) => {
     const item = document.createElement("div");
     item.setAttribute("role", "button");
@@ -1919,9 +1955,14 @@ function renderProjectList() {
     item.className = `project-item${project.id === state.activeProjectId ? " active" : ""}`;
     item.dataset.id = project.id;
     item.setAttribute("aria-label", `切换到项目：${project.title}`);
+    const expanded = project.id === state.activeProjectId;
+    // 只有当前激活项目展开，箭头方向表示它下面有没有摊开对话。
+    const caret = document.createElement("span");
+    caret.className = "project-item-caret";
+    caret.innerHTML = `<i data-lucide="${expanded ? "chevron-down" : "chevron-right"}" aria-hidden="true"></i>`;
     const icon = document.createElement("span");
     icon.className = "project-item-icon";
-    icon.innerHTML = `<i data-lucide="${project.id === state.activeProjectId ? "folder-open" : "folder"}" aria-hidden="true"></i>`;
+    icon.innerHTML = `<i data-lucide="${expanded ? "folder-open" : "folder"}" aria-hidden="true"></i>`;
     const title = document.createElement("span");
     title.className = "project-item-title";
     title.textContent = project.title;
@@ -1930,7 +1971,7 @@ function renderProjectList() {
     count.textContent = String(conversationsInProject(project.id).length);
     // 当前项目的生成状态由其下的对话行展示；未激活项目才在项目行显示状态。
     const activityIndicator = appendActivityIndicator(null, projectActivity(project.id), {
-      hidden: project.id === state.activeProjectId,
+      hidden: expanded,
     });
     const trigger = document.createElement("button");
     trigger.className = "project-menu-trigger";
@@ -1990,11 +2031,30 @@ function renderProjectList() {
       item.classList.toggle("menu-open", willOpen);
     });
     menu.append(rename, addChat, del);
-    item.append(...[icon, title, count, activityIndicator, trigger, menu].filter(Boolean));
+    item.append(...[caret, icon, title, count, activityIndicator, trigger, menu].filter(Boolean));
     item.addEventListener("click", () => {
       closeAllMenus();
       selectProject(project.id);
       closeMobileHistory();
+    });
+    // 作为对话拖拽的落点：悬停高亮，松手后把对话移入该项目。
+    item.addEventListener("dragover", (event) => {
+      if (!Array.from(event.dataTransfer.types).includes(CONVERSATION_DRAG_TYPE))
+        return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      item.classList.add("drop-target");
+    });
+    item.addEventListener("dragleave", (event) => {
+      // 鼠标在行内子元素之间移动也会触发 dragleave，只有真正离开整行才取消高亮。
+      if (item.contains(event.relatedTarget)) return;
+      item.classList.remove("drop-target");
+    });
+    item.addEventListener("drop", (event) => {
+      event.preventDefault();
+      item.classList.remove("drop-target");
+      const conversationId = event.dataTransfer.getData(CONVERSATION_DRAG_TYPE);
+      moveConversationToProject(conversationId, project.id);
     });
     item.addEventListener("keydown", (event) => {
       if (event.target !== item) return;
@@ -2004,7 +2064,35 @@ function renderProjectList() {
       }
     });
     els.projectList.append(item);
+    // 当前激活项目展开：它的对话就缩进列在项目行下面，其余项目保持折叠。
+    if (!expanded) return;
+    const group = document.createElement("div");
+    group.className = "project-conversations";
+    group.dataset.projectId = project.id;
+    // 分组空白区同样接受对话拖入，避免只有项目行一条窄缝能接住。
+    group.addEventListener("dragover", (event) => {
+      if (!Array.from(event.dataTransfer.types).includes(CONVERSATION_DRAG_TYPE))
+        return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      group.classList.add("drop-target");
+    });
+    group.addEventListener("dragleave", (event) => {
+      if (group.contains(event.relatedTarget)) return;
+      group.classList.remove("drop-target");
+    });
+    group.addEventListener("drop", (event) => {
+      event.preventDefault();
+      group.classList.remove("drop-target");
+      moveConversationToProject(
+        event.dataTransfer.getData(CONVERSATION_DRAG_TYPE),
+        project.id,
+      );
+    });
+    renderConversationItems(group, conversationsInProject(project.id));
+    els.projectList.append(group);
   });
+  updateProjectPill();
   refreshIcons();
 }
 /** 切换当前项目：刷新对话列表，并在没有对话时给一个空白会话。 */
@@ -2013,14 +2101,19 @@ function selectProject(id) {
   renderProjectList();
   resetConversationStage();
 }
-async function addProject() {
-  const project = createProject();
-  await putProject(project);
-  state.projects = sortProjects(state.projects.concat(project));
-  selectProject(project.id);
-  const item = els.projectList?.querySelector(`[data-id="${project.id}"]`);
-  item?.scrollIntoView({ block: "nearest" });
-  showToast("已新建项目");
+/** 把对话移动到另一个项目：只改归属字段，不动 updatedAt，避免排序跳动。 */
+async function moveConversationToProject(conversationId, projectId) {
+  const conversation = state.conversations.find(
+    (entry) => entry.id === conversationId,
+  );
+  const project = state.projects.find((entry) => entry.id === projectId);
+  if (!conversation || !project) return;
+  if (conversation.projectId === projectId) return;
+  conversation.projectId = projectId;
+  await saveConversation(conversation, { touchUpdatedAt: false });
+  // 移动后归属项目的生成状态/计数有变化，顺手刷新一次项目列表。
+  renderProjectList();
+  showToast(`已移动到「${project.title}」`);
 }
 /** 删除项目：连同其下所有对话一起清理，最后保证至少留下一个项目。 */
 async function deleteProject(id) {
@@ -2037,22 +2130,20 @@ async function deleteProject(id) {
         (item) => item.projectId !== id,
       );
       state.projects = state.projects.filter((item) => item.id !== id);
-      if (!state.projects.length) {
-        const fallback = createProject(DEFAULT_PROJECT_TITLE);
-        await putProject(fallback);
-        state.projects.push(fallback);
-      }
-      state.activeProjectId = state.projects[0].id;
       state.activeConversationId = null;
+      // 删光了就补回「默认项目」，侧栏永远至少有一个可承载对话的项目。
+      await ensureProject();
       renderProjectList();
-      renderConversationList();
       openNewConversation();
       showToast("项目已删除");
     },
     true,
   );
 }
-/** 保证存在至少一个项目，并返回当前项目。 */
+/**
+ * 保证项目永远不为空：空库、或项目被删光时，自动创建「默认项目」。
+ * 对话必须挂在项目下面，所以「默认项目」就是这条规则的载体，始终存在。
+ */
 async function ensureProject() {
   if (!state.projects.length) {
     const project = createProject(DEFAULT_PROJECT_TITLE);
@@ -2143,6 +2234,9 @@ function initAmbientMotion() {
 /** 把主区域恢复到「空白新对话」，但不影响侧栏与项目选中状态。 */
 function resetConversationStage() {
   state.activeConversationId = null;
+  // 新草稿默认归属当前激活项目，之后可用项目胶囊改绑。
+  state.draftProjectId = state.activeProjectId;
+  state.draftProjectTitle = null;
   state.sourceFiles = [];
   state.pendingMentions = [];
   state.mentionCursor = -1;
@@ -2158,6 +2252,7 @@ function resetConversationStage() {
   renderAttachments();
   renderMentionTags();
   renderConversationList();
+  updateProjectPill();
   closeMentionPicker();
 }
 async function openNewConversation() {
@@ -2202,15 +2297,43 @@ async function openConversation(id) {
   renderConversationList();
   scrollToBottom();
 }
-function ensureConversation(prompt) {
+async function ensureConversation(prompt) {
   if (state.activeConversationId)
     return state.conversations.find(
       (item) => item.id === state.activeConversationId,
     );
-  const conversation = createConversation(state.activeProjectId);
+  // 草稿以胶囊选定的项目为准；未选过时回退到当前激活项目。
+  let targetProjectId = state.draftProjectId || state.activeProjectId;
+  // 草稿里打了新项目名：此刻才真正落库，并把项目与会话一起建出来。
+  const pendingTitle = (state.draftProjectTitle || "").trim();
+  if (pendingTitle) {
+    // 恰好有同名项目就直接复用，避免侧栏出现两行同名项目。
+    const existing = state.projects.find((item) => item.title === pendingTitle);
+    if (existing) {
+      targetProjectId = existing.id;
+    } else {
+      const project = createProject(pendingTitle);
+      await putProject(project);
+      state.projects = sortProjects(state.projects.concat(project));
+      targetProjectId = project.id;
+      showToast(`已创建项目「${project.title}」`);
+    }
+    state.draftProjectTitle = null;
+  }
+  // 项目理论上永不为空；真碰到空库（首次启动）就补一个「默认项目」。
+  if (!targetProjectId) targetProjectId = (await ensureProject()).id;
+  const conversation = createConversation(targetProjectId);
   conversation.title = titleFromPrompt(prompt);
   state.activeConversationId = conversation.id;
   state.conversations.push(conversation);
+  // 首条消息发出后，侧栏正式切到对话所属项目，保证列表里能立刻看到它。
+  if (targetProjectId && targetProjectId !== state.activeProjectId) {
+    state.activeProjectId = targetProjectId;
+    renderProjectList();
+  }
+  // 草稿阶段结束：归属已落定，把草稿指针同步到真实项目，胶囊才不会继续指向旧项目。
+  state.draftProjectId = targetProjectId;
+  updateProjectPill();
   els.conversationTitle.textContent = conversation.title;
   els.welcomeScreen.classList.add("hidden");
   els.composerWrap.classList.add("conversation-mode");
@@ -2443,7 +2566,7 @@ async function submitGeneration() {
   // 前端只提交用户自己的描述，因此这里始终用带 @ 引用的完整提示词文本。
   const prompt = getPromptText(true).trim();
   const displayPrompt = rawPrompt;
-  const conversation = ensureConversation(prompt);
+  const conversation = await ensureConversation(prompt);
   const dimensions = {
     width: Number(state.width) || 1024,
     height: Number(state.height) || 1024,
@@ -2637,6 +2760,12 @@ document.addEventListener("click", (event) => {
     !event.target.closest("#modelButton")
   )
     setModelPopoverOpen(false);
+  if (
+    !els.projectPopover.classList.contains("hidden") &&
+    !els.projectPopover.contains(event.target) &&
+    !event.target.closest("#projectButton")
+  )
+    setProjectPopoverOpen(false);
 });
 document.addEventListener("keydown", (event) => {
   if (!els.authModal.classList.contains("hidden")) {
@@ -2674,6 +2803,7 @@ document.addEventListener("keydown", (event) => {
   closeAllMenus();
   setSettingsOpen(false);
   setModePopoverOpen(false);
+  setProjectPopoverOpen(false);
   closeMobileHistory();
   if (!els.confirmBackdrop.classList.contains("hidden")) closeConfirm();
 });
@@ -2714,6 +2844,7 @@ document.querySelectorAll("[data-mode]").forEach((button) =>
 els.settingsButton.addEventListener("click", () => {
   setModePopoverOpen(false);
   setModelPopoverOpen(false);
+  setProjectPopoverOpen(false);
   toggleSettingsPopover();
 });
 els.closeSettings.addEventListener("click", () =>
@@ -2725,13 +2856,38 @@ els.closeMode?.addEventListener("click", () =>
 els.modelButton.addEventListener("click", () => {
   setSettingsOpen(false);
   setModePopoverOpen(false);
+  setProjectPopoverOpen(false);
   toggleModelPopover();
 });
 els.closeModel?.addEventListener("click", () => setModelPopoverOpen(false));
 els.modeButton.addEventListener("click", () => {
   setSettingsOpen(false);
   setModelPopoverOpen(false);
+  setProjectPopoverOpen(false);
   toggleModePopover();
+});
+els.projectButton.addEventListener("click", () => {
+  setSettingsOpen(false);
+  setModePopoverOpen(false);
+  setModelPopoverOpen(false);
+  toggleProjectPopover();
+});
+els.closeProject?.addEventListener("click", () => setProjectPopoverOpen(false));
+els.projectSearchInput.addEventListener("input", () =>
+  renderProjectOptions(els.projectSearchInput.value),
+);
+els.projectCreateToggle.addEventListener("click", () =>
+  setProjectCreateRowVisible(true),
+);
+els.projectCreateConfirm.addEventListener("click", applyDraftProjectName);
+els.projectCreateInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    applyDraftProjectName();
+  } else if (event.key === "Escape") {
+    event.stopPropagation();
+    setProjectCreateRowVisible(false);
+  }
 });
 function setSettingsOpen(open) {
   els.settingsPopover.classList.toggle("hidden", !open);
@@ -2846,10 +3002,146 @@ function positionModelPopover() {
 function toggleModelPopover() {
   setModelPopoverOpen(els.modelPopover.classList.contains("hidden"));
 }
+// ---------- 项目选择器（新建对话绑定项目，对齐 Codex） ----------
+/** 胶囊上显示的是草稿待绑定的项目；打开已有对话时胶囊整体隐藏（见 CSS）。 */
+function updateProjectPill() {
+  if (!els.projectLabel) return;
+  const pending = state.draftProjectTitle;
+  const target = pending
+    ? null
+    : state.projects.find((item) => item.id === state.draftProjectId) ||
+      activeProject();
+  els.projectLabel.textContent = pending || target?.title || "选择项目";
+  // 尚未落库的项目用虚线胶囊区分，鼠标悬停说明它什么时候才会真正创建。
+  els.projectButton?.classList.toggle("pending", Boolean(pending));
+  if (els.projectButton)
+    els.projectButton.title = pending
+      ? `「${pending}」将在发出首条消息时创建`
+      : "选择或新建项目";
+}
+function renderProjectOptions(filter = "") {
+  if (!els.projectOptions) return;
+  const keyword = filter.trim().toLowerCase();
+  const list = state.projects.filter(
+    (project) => !keyword || project.title.toLowerCase().includes(keyword),
+  );
+  els.projectOptions.innerHTML = "";
+  // 草稿里已经打好名字、但还没落库的项目：置顶展示，让用户知道当前挂在谁名下。
+  if (state.draftProjectTitle && !keyword) {
+    const pending = document.createElement("div");
+    pending.className = "project-option pending";
+    pending.innerHTML =
+      '<span class="model-option-icon"><i data-lucide="clock"></i></span>' +
+      '<span class="model-option-copy">' +
+      `<span class="model-option-title">${escapeHtml(state.draftProjectTitle)}</span>` +
+      '<span class="model-option-desc">发送消息时创建</span>' +
+      "</span>";
+    els.projectOptions.appendChild(pending);
+  }
+  if (!list.length) {
+    if (state.draftProjectTitle && !keyword) {
+      refreshIcons();
+      return;
+    }
+    const empty = document.createElement("p");
+    empty.className = "project-options-empty";
+    empty.textContent = keyword ? "没有匹配的项目" : "还没有项目，先新建一个";
+    els.projectOptions.appendChild(empty);
+    return;
+  }
+  list.forEach((project) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className =
+      "model-option project-option" +
+      // 挂着待创建项目时不给任何现有项目打勾，避免出现两个「当前项」。
+      (!state.draftProjectTitle && project.id === state.draftProjectId
+        ? " active"
+        : "");
+    button.dataset.id = project.id;
+    button.innerHTML =
+      '<span class="model-option-icon"><i data-lucide="folder"></i></span>' +
+      '<span class="model-option-copy">' +
+      `<span class="model-option-title">${escapeHtml(project.title)}</span>` +
+      `<span class="model-option-desc">${conversationsInProject(project.id).length} 个对话</span>` +
+      "</span>" +
+      '<span class="model-option-state"><i data-lucide="check"></i></span>';
+    button.addEventListener("click", () => {
+      // 只改草稿归属，不动侧栏高亮；首条消息发出后才正式切到该项目。
+      state.draftProjectId = project.id;
+      // 改选了现有项目，之前输入的待创建名字作废。
+      state.draftProjectTitle = null;
+      updateProjectPill();
+      setProjectPopoverOpen(false);
+    });
+    els.projectOptions.appendChild(button);
+  });
+  refreshIcons();
+}
+function setProjectCreateRowVisible(visible) {
+  els.projectCreateRow.classList.toggle("hidden", !visible);
+  els.projectCreateToggle.classList.toggle("hidden", visible);
+  if (visible) {
+    // 已经打过草稿名字的话预填，方便改名而不是重打。
+    els.projectCreateInput.value = state.draftProjectTitle || "";
+    els.projectCreateInput.focus();
+    els.projectCreateInput.select();
+  }
+}
+/**
+ * 确认草稿项目名：这里只把名字记在 state 上，不落库。
+ * 真正的项目记录由 ensureConversation() 在首条消息发出时创建，
+ * 所以「输入名字后反悔」不会在侧栏留下空项目。
+ */
+function applyDraftProjectName() {
+  const name = els.projectCreateInput.value.trim();
+  if (!name) {
+    showToast("请输入项目名称", "error");
+    els.projectCreateInput.focus();
+    return;
+  }
+  state.draftProjectTitle = name.slice(0, 40);
+  state.draftProjectId = null;
+  setProjectCreateRowVisible(false);
+  updateProjectPill();
+  setProjectPopoverOpen(false);
+  showToast(`将创建项目「${state.draftProjectTitle}」，发出消息后生效`);
+}
+function setProjectPopoverOpen(open) {
+  els.projectPopover.classList.toggle("hidden", !open);
+  els.projectButton.setAttribute("aria-expanded", String(open));
+  if (open) {
+    // 草稿未选过项目时跟随当前激活项目。
+    if (!state.draftProjectId) state.draftProjectId = state.activeProjectId;
+    els.projectSearchInput.value = "";
+    setProjectCreateRowVisible(false);
+    renderProjectOptions();
+    positionProjectPopover();
+  }
+}
+function positionProjectPopover() {
+  const rect = els.projectButton.getBoundingClientRect();
+  const popup = els.projectPopover;
+  popup.style.visibility = "hidden";
+  popup.classList.remove("hidden");
+  const popupRect = popup.getBoundingClientRect();
+  let left = rect.left;
+  const maxLeft = window.innerWidth - popupRect.width - 10;
+  left = Math.max(10, Math.min(left, maxLeft));
+  let top = rect.top - popupRect.height - 10;
+  if (top < 10) top = rect.bottom + 10;
+  popup.style.left = left + "px";
+  popup.style.top = top + "px";
+  popup.style.visibility = "";
+}
+function toggleProjectPopover() {
+  setProjectPopoverOpen(els.projectPopover.classList.contains("hidden"));
+}
 window.addEventListener("resize", () => {
   if (!els.modePopover.classList.contains("hidden")) positionModePopover();
   if (!els.settingsPopover.classList.contains("hidden")) positionSettingsPopover();
   if (!els.modelPopover.classList.contains("hidden")) positionModelPopover();
+  if (!els.projectPopover.classList.contains("hidden")) positionProjectPopover();
   closeAllMenus();
 });
 els.resolution.addEventListener("change", () => {
@@ -2989,7 +3281,6 @@ els.authModal.addEventListener("click", (event) => {
   if (event.target.matches("[data-auth-close]")) closeAuthModal();
 });
 els.newConversation.addEventListener("click", openNewConversation);
-els.newProject?.addEventListener("click", addProject);
 els.mobileNewConversation.addEventListener("click", openNewConversation);
 els.mobileHistory?.addEventListener("click", () => {
   const open = document.querySelector(".sidebar")?.classList.contains("mobile-open");
@@ -3058,10 +3349,9 @@ async function loadModels() {
 
 async function init() {
   try {
-    // 先恢复项目层，再把历史对话迁移到默认项目，最后才是会话列表。
+    // 先恢复项目层，再恢复会话；项目层允许为空，由 ensureProject 补「默认项目」。
     state.projects = sortProjects(await getProjects());
     state.conversations = sortConversations(await getConversations());
-    await migrateConversationsToProjects();
     await recoverInterruptedGenerations();
     await ensureProject();
     if (!state.conversations.length) {
@@ -3084,8 +3374,10 @@ async function init() {
         await saveConversation(conversation);
       }
     }
+    // 老数据（含上面刚导入的历史记录）统一归入「默认项目」，避免出现无归属对话。
+    await migrateConversationsToProjects();
+    await ensureProject();
     renderProjectList();
-    renderConversationList();
     await openNewConversation();
   } catch (error) {
     showToast(error.message, "error");

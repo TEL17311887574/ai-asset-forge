@@ -30,19 +30,9 @@
           <span>项目</span>
           <span class="sidebar-label-actions">
             <span class="conversation-total" id="projectTotal">0</span>
-            <button class="sidebar-add" id="newProject" type="button" aria-label="新建项目" title="新建项目"><i data-lucide="folder-plus" aria-hidden="true"></i></button>
           </span>
         </div>
         <nav class="project-list" id="projectList" aria-label="项目列表"></nav>
-        <div class="sidebar-label">
-          <span class="scope-name" id="projectScope">对话记录</span>
-          <span class="conversation-total" id="conversationTotal">0</span>
-        </div>
-        <nav
-          class="conversation-list"
-          id="conversationList"
-          aria-label="对话记录"
-        ></nav>
         <div class="sidebar-foot">
           <span class="connection" id="connectionState"
             ><span class="dot" aria-hidden="true"></span>检查服务状态…</span
@@ -71,7 +61,7 @@
             <span>AI ASSET FORGE</span>
           </div>
           <div class="mobile-actions">
-            <button class="mobile-history" id="mobileHistory" type="button" aria-label="打开对话记录" aria-expanded="false"><i data-lucide="menu" aria-hidden="true"></i></button>
+            <button class="mobile-history" id="mobileHistory" type="button" aria-label="打开项目与对话列表" aria-expanded="false"><i data-lucide="menu" aria-hidden="true"></i></button>
             <button class="mobile-new" id="mobileNewConversation" type="button" aria-label="新建对话"><i data-lucide="plus" aria-hidden="true"></i></button>
           </div>
         </header>
@@ -150,7 +140,11 @@
             </div>
             <div class="composer-toolbar">
               <div class="toolbar-left">
-                <button
+                <button class="tool-pill project-pill" id="projectButton" type="button" aria-controls="projectPopover" aria-expanded="false">
+                  <span class="tool-icon"><i data-lucide="folder" aria-hidden="true"></i></span
+                  ><span id="projectLabel">选择项目</span
+                  ><span class="chevron"><i data-lucide="chevron-down" aria-hidden="true"></i></span></button
+                ><button
                   class="attach-button"
                   id="attachButton"
                   type="button"
@@ -184,7 +178,7 @@
       </main>
     </div>
 
-    <button class="sidebar-scrim hidden" id="sidebarScrim" type="button" aria-label="关闭对话记录"></button>
+    <button class="sidebar-scrim hidden" id="sidebarScrim" type="button" aria-label="关闭侧栏"></button>
     <div class="confirm-backdrop hidden" id="confirmBackdrop">
       <div
         class="confirm-dialog"
@@ -598,6 +592,31 @@
         可用模型来自服务端 config_default.py 的 AVAILABLE_MODELS。
       </p>
       <div class="model-options" id="modelOptions" aria-label="模型选项"></div>
+    </div>
+    <div
+      class="model-popover project-popover hidden"
+      id="projectPopover"
+      role="group"
+      aria-labelledby="projectPopoverTitle"
+    >
+      <div class="popover-title">
+        <span id="projectPopoverTitle">选择项目</span>
+        <button type="button" class="close-popover" id="closeProject" aria-label="关闭项目选择">
+          <i data-lucide="x" aria-hidden="true"></i>
+        </button>
+      </div>
+      <div class="project-search">
+        <i data-lucide="search" aria-hidden="true"></i>
+        <input id="projectSearchInput" type="search" placeholder="搜索项目" autocomplete="off" />
+      </div>
+      <div class="model-options project-options" id="projectOptions" aria-label="项目选项"></div>
+      <div class="project-create-row hidden" id="projectCreateRow">
+        <input id="projectCreateInput" type="text" maxlength="40" placeholder="输入项目名称后回车" autocomplete="off" />
+        <button type="button" class="project-create-confirm" id="projectCreateConfirm">确定</button>
+      </div>
+      <button type="button" class="project-create-toggle" id="projectCreateToggle">
+        <i data-lucide="folder-plus" aria-hidden="true"></i><span>新建项目</span>
+      </button>
     </div>
     <script src="/vendor/lucide/lucide.min.js"></script>
     <script type="module" src="/app.js"></script>

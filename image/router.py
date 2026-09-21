@@ -1,6 +1,6 @@
 """图片生成与编辑接口。"""
 
-from typing import Annotated
+from typing import Annotated, Optional, Union
 
 from fastapi import APIRouter, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
@@ -80,11 +80,11 @@ async def edit(
     prompt: Annotated[str, Form()],
     size: Annotated[str, Form()] = "1024x1024",
     quality: Annotated[str, Form()] = "medium",
-    n: Annotated[int | str, Form()] = 1,
+    n: Annotated[Union[int, str], Form()] = 1,
     mode: Annotated[str, Form()] = "edit",
-    model: Annotated[str | None, Form()] = None,
+    model: Annotated[Optional[str], Form()] = None,
     input_fidelity: Annotated[str, Form()] = "low",
-    mask: Annotated[UploadFile | None, Form()] = None,
+    mask: Annotated[Optional[UploadFile], Form()] = None,
 ):
     """图生图接口：基于原图和提示词进行编辑、蒙版或单参考图预设模式生成。
 
