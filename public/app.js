@@ -1,9 +1,15 @@
 const MAX_SOURCE_FILES = 16;
 const DB_NAME = "gpt-image-2-studio";
-const DB_VERSION = 3;
+const DB_VERSION = 5;
 const PROJECT_STORE = "projects";
 const CONVERSATION_STORE = "conversations";
 const LEGACY_STORE = "generations";
+const ASSET_STORE = "assets";
+const ASSET_CATEGORIES = Object.freeze([
+  { id: "character", label: "角色", english: "CHARACTERS", icon: "user-round" },
+  { id: "scene", label: "场景", english: "SCENES", icon: "landmark" },
+  { id: "prop", label: "道具", english: "PROPS", icon: "package" },
+]);
 // 对话拖拽移动时写入 dataTransfer 的自定义类型，用来区分其它拖拽（如文件拖入）。
 const CONVERSATION_DRAG_TYPE = "application/x-conversation-id";
 // Keep every model/resolution/ratio combination in one place. If GPT Image
@@ -47,8 +53,8 @@ const RESOLUTION_PRESETS = Object.freeze({
 const modeContent = {
   default: "程序会根据是否上传参考图，自动选择文生图或图生图。",
   mask: "上传原图并擦出蒙版区域，只修改你指定的部分。",
-  characterTurnaround: "需 1 张参考图，生成工作室肖像与全身三视图。",
-  sceneMultiView: "需 1 张参考图，生成 2×2 场景多视角网格。",
+  characterTurnaround: "需 1 张参考图（包含资产），生成工作室肖像与全身三视图。",
+  sceneMultiView: "需 1 张参考图（包含资产），生成 2×2 场景多视角网格。",
 };
 const modeLabels = {
   default: "默认",
@@ -86,6 +92,9 @@ const state = {
   height: 1024,
   linkSize: true,
   conversations: [],
+  assets: [],
+  assetCategoryTab: "character",
+  workspaceView: "conversation",
   activeConversationId: null,
   projects: [],
   activeProjectId: null,
@@ -95,16 +104,26 @@ const state = {
   // 项目本身要等首条消息发出时才真正建库，避免留下空项目。
   draftProjectTitle: null,
   pendingMentions: [],
+  pendingAssetMentions: [],
   mentionCursor: -1,
   mentionRange: null,
+  assetMentionRange: null,
   mentionPickerOpen: false,
   activeMaskIndex: 0,
   maskEditorOpen: false,
   authenticated: false,
   model: "gpt-image-2",
   availableModels: [],
+  assetModalMode: "upload",
+  assetModalCategory: "character",
+  assetModalImage: null,
+  assetModalSource: null,
+  assetPickerFilter: "all",
 };
 const $ = (selector) => document.querySelector(selector);
+function totalReferenceCount() {
+  return state.sourceFiles.length + uniqueAssetMentions().length;
+}
 const refreshIcons = () =>
   window.lucide?.createIcons({ attrs: { "stroke-width": 1.8 } });
 const els = {
@@ -202,6 +221,32 @@ const els = {
   cancelConfirm: $("#cancelConfirm"),
   confirmAction: $("#confirmAction"),
   composerHint: $("#composerHint"),
+  conversationNav: $("#conversationNav"),
+  assetNav: $("#assetNav"),
+  assetTotal: $("#assetTotal"),
+  assetStage: $("#assetStage"),
+  assetTabs: $("#assetTabs"),
+  assetSections: $("#assetSections"),
+  assetButton: $("#assetButton"),
+  assetModal: $("#assetModal"),
+  closeAssetModal: $("#closeAssetModal"),
+  cancelAssetModal: $("#cancelAssetModal"),
+  assetForm: $("#assetForm"),
+  assetModalCategory: $("#assetModalCategory"),
+  assetCategoryInput: $("#assetCategoryInput"),
+  assetFileInput: $("#assetFileInput"),
+  assetFilePicker: $("#assetFilePicker"),
+  assetFileSelected: $("#assetFileSelected"),
+  assetFilePreview: $("#assetFilePreview"),
+  assetFileName: $("#assetFileName"),
+  assetFileChange: $("#assetFileChange"),
+  assetNameInput: $("#assetNameInput"),
+  assetModalHint: $("#assetModalHint"),
+  saveAsset: $("#saveAsset"),
+  assetPickerModal: $("#assetPickerModal"),
+  closeAssetPicker: $("#closeAssetPicker"),
+  assetPickerGrid: $("#assetPickerGrid"),
+  assetFilterTabs: $("#assetFilterTabs"),
 };
 let dbPromise;
 let confirmCallback;
@@ -371,6 +416,12 @@ function sourceBlob(item) {
 }
 function getPromptText(labels = false) {
   if (!els.prompt) return "";
+  const assetReferenceIndexes = new Map(
+    uniqueAssetMentions().map((mention, index) => [
+      assetMentionKey(mention),
+      state.sourceFiles.length + index + 1,
+    ]),
+  );
   const read = (node) => {
     if (node.nodeType === Node.ELEMENT_NODE && node.tagName === "BR")
       return "\n";
@@ -380,6 +431,20 @@ function getPromptText(labels = false) {
       const index = Number(node.dataset.index);
       return labels ? `图片${index + 1}` : "@";
     }
+    if (node.classList.contains("asset-mention")) {
+      const title = node.dataset.title || "未命名资产";
+      if (!labels) return `资产：${title}`;
+      // References are uploaded in the same order as getReferences():
+      // normal source images first, then asset snapshots. Keep the prompt's
+      // image number aligned with that order so the model can bind text to
+      // the correct image.
+      const referenceIndex = assetReferenceIndexes.get(assetMentionKey({
+        assetId: node.dataset.assetId,
+        dataUrl: node.dataset.dataUrl || node.querySelector("img")?.src || "",
+        title,
+      })) || state.sourceFiles.length + 1;
+      return `图片${referenceIndex}（资产：${title}）`;
+    }
     const content = [...node.childNodes].map(read).join("");
     return /^(DIV|P|LI)$/.test(node.tagName) ? `${content}\n` : content;
   };
@@ -388,6 +453,80 @@ function getPromptText(labels = false) {
     .join("")
     .replace(/\u00a0/g, " ")
     .replace(/\n+$/, "");
+}
+
+function createAssetMention(asset, snapshot = true) {
+  const mention = document.createElement("span");
+  mention.className = "asset-mention";
+  mention.contentEditable = "false";
+  mention.dataset.assetId = asset.id || "";
+  mention.dataset.title = asset.title || asset.name || "未命名资产";
+  if (snapshot) mention.dataset.dataUrl = asset.dataUrl || "";
+  const img = document.createElement("img");
+  img.src = asset.dataUrl || "";
+  img.alt = mention.dataset.title;
+  const label = document.createElement("span");
+  label.textContent = mention.dataset.title;
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "inline-mention-remove asset-mention-remove";
+  remove.textContent = "×";
+  remove.setAttribute("aria-label", `移除资产 ${mention.dataset.title}`);
+  remove.addEventListener("mousedown", (event) => event.preventDefault());
+  remove.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); mention.remove(); syncPendingMentions(); els.prompt.dispatchEvent(new Event("input")); });
+  // Match reference-image mentions: remove button, thumbnail, then label.
+  mention.append(remove, img, label);
+  return mention;
+}
+function syncAssetMentions() {
+  state.pendingAssetMentions = [...els.prompt.querySelectorAll(".asset-mention")].map((node) => ({
+    assetId: node.dataset.assetId,
+    title: node.dataset.title,
+    dataUrl: node.dataset.dataUrl || node.querySelector("img")?.src || "",
+  }));
+}
+function assetMentionKey(mention) {
+  return mention?.assetId || mention?.dataUrl || `title:${mention?.title || "未命名资产"}`;
+}
+function uniqueAssetMentions(mentions = state.pendingAssetMentions) {
+  const seen = new Set();
+  return mentions.filter((mention) => {
+    const key = assetMentionKey(mention);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+function insertAssetMention(asset) {
+  const currentCount = totalReferenceCount();
+  if (SINGLE_REFERENCE_MODES.includes(state.mode) && currentCount >= 1) {
+    showToast(`${modeLabels[state.mode]}只能使用 1 张参考图（包含资产）`, "error");
+    return;
+  }
+  if (currentCount >= MAX_SOURCE_FILES) {
+    showToast(`最多只能添加 ${MAX_SOURCE_FILES} 张参考图（包含资产）`, "error");
+    return;
+  }
+  let range = state.assetMentionRange?.cloneRange() || currentPromptRange();
+  if (!range || !els.prompt.contains(range.commonAncestorContainer)) {
+    els.prompt.focus();
+    range = currentPromptRange();
+  }
+  // The picker steals focus, so always fall back to the end of the editor
+  // rather than downgrading an asset reference to plain text.
+  if (!range || !els.prompt.contains(range.commonAncestorContainer)) {
+    range = document.createRange();
+    range.selectNodeContents(els.prompt);
+    range.collapse(false);
+  }
+  range.deleteContents();
+  const mention = createAssetMention(asset);
+  range.insertNode(mention);
+  const caret = document.createRange();
+  caret.setStartAfter(mention); caret.collapse(true);
+  const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(caret);
+  state.assetMentionRange = null;
+  syncAssetMentions(); els.prompt.dispatchEvent(new Event("input"));
 }
 function setPromptText(text, mentionIndexes = []) {
   if (!els.prompt) return;
@@ -489,6 +628,7 @@ function syncPendingMentions() {
     index: Number(node.dataset.index),
     node,
   }));
+  syncAssetMentions();
 }
 function currentPromptRange() {
   const selection = window.getSelection?.();
@@ -734,6 +874,11 @@ function openDb() {
         });
         generations.createIndex("createdAt", "createdAt");
       }
+      if (!db.objectStoreNames.contains(ASSET_STORE)) {
+        const assets = db.createObjectStore(ASSET_STORE, { keyPath: "id" });
+        assets.createIndex("category", "category");
+        assets.createIndex("updatedAt", "updatedAt");
+      }
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () =>
@@ -774,6 +919,33 @@ async function deleteConversationFromDb(id) {
       .objectStore(CONVERSATION_STORE)
       .delete(id),
   );
+}
+async function getAssets() {
+  const db = await openDb();
+  return idbRequest(db.transaction(ASSET_STORE, "readonly").objectStore(ASSET_STORE).getAll());
+}
+async function putAsset(asset) {
+  const db = await openDb();
+  return idbRequest(db.transaction(ASSET_STORE, "readwrite").objectStore(ASSET_STORE).put(asset));
+}
+async function deleteAssetFromDb(id) {
+  const db = await openDb();
+  return idbRequest(db.transaction(ASSET_STORE, "readwrite").objectStore(ASSET_STORE).delete(id));
+}
+function sortAssets(assets) {
+  return [...(assets || [])].sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+}
+function assetCategory(category) {
+  return ASSET_CATEGORIES.find((entry) => entry.id === category) || ASSET_CATEGORIES[0];
+}
+function uniqueAssetTitle(title, ignoredId = null) {
+  const base = String(title || "").trim() || "未命名资产";
+  const names = new Set(state.assets.filter((asset) => asset.id !== ignoredId).map((asset) => asset.title || asset.name));
+  if (!names.has(base)) return base;
+  let index = 1;
+  let candidate = `${base}(${index})`;
+  while (names.has(candidate)) candidate = `${base}(${++index})`;
+  return candidate;
 }
 // ---------------------------------------------------------------- 项目层
 // 结构：项目（projects）1 ── n 会话（conversations），会话带 projectId 外键。
@@ -1023,6 +1195,33 @@ function appendSplitGridAccordion(card, message) {
         event.stopPropagation();
         useSplitImageAsReference(image, splitIndex);
       });
+      const addAsset = document.createElement("button");
+      addAsset.type = "button";
+      addAsset.className = "generated-add-asset";
+      addAsset.setAttribute(
+        "aria-label",
+        `第 ${resultIndex + 1} 次拆分图片 ${splitIndex + 1} 添加到资产库`,
+      );
+      addAsset.title = "添加到资产库";
+      addAsset.innerHTML = `<svg class="generated-add-asset-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M4 7.5h16v12H4zM6 4.5h12l2 3H4l2-3Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+        <path d="M12 11v5M9.5 13.5h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+      </svg>`;
+      addAsset.addEventListener("click", (event) => {
+        event.stopPropagation();
+        openAssetModal({
+          mode: "generation",
+          image: {
+            dataUrl: image.dataUrl,
+            name: image.name || `grid-split-${splitIndex + 1}.jpg`,
+          },
+          source: {
+            type: "generation-split",
+            conversationId: state.activeConversationId,
+            messageId: message.id,
+          },
+        });
+      });
       const download = document.createElement("a");
       download.className = "generated-download split-download";
       download.href = image.dataUrl;
@@ -1030,7 +1229,7 @@ function appendSplitGridAccordion(card, message) {
       download.setAttribute("aria-label", `下载拆分图片 ${splitIndex + 1}`);
       download.title = `下载拆分图片 ${splitIndex + 1}`;
       download.innerHTML = '<i data-lucide="download" aria-hidden="true"></i>';
-      wrap.append(img, useAsReference, download);
+      wrap.append(img, useAsReference, addAsset, download);
       splitImages.append(wrap);
     });
     content.append(splitImages);
@@ -1096,6 +1295,103 @@ function appendGenerationActions(card, message) {
   actions.append(edit, regenerate, remove);
   card.append(actions);
 }
+
+function setWorkspaceView(view) {
+  state.workspaceView = view === "assets" ? "assets" : "conversation";
+  const assets = state.workspaceView === "assets";
+  const headingKicker = document.querySelector(".heading-kicker");
+  if (headingKicker) headingKicker.textContent = assets ? "LOCAL ARCHIVE / ASSETS" : "IMAGE LAB / CHAT";
+  if (assets) els.conversationTitle.textContent = "资产库";
+  else if (state.activeConversationId) els.conversationTitle.textContent = state.conversations.find((item) => item.id === state.activeConversationId)?.title || "新建对话";
+  els.conversationStage.classList.toggle("hidden", assets);
+  els.composerWrap.classList.toggle("hidden", assets);
+  els.assetStage.classList.toggle("hidden", !assets);
+  els.conversationNav?.classList.toggle("active", !assets);
+  els.assetNav?.classList.toggle("active", assets);
+  els.conversationNav?.setAttribute("aria-current", assets ? "false" : "page");
+  els.assetNav?.setAttribute("aria-current", assets ? "page" : "false");
+  if (assets) renderAssetStage();
+}
+function renderAssetStage() {
+  if (!els.assetSections) return;
+  const activeCategory = ASSET_CATEGORIES.some((category) => category.id === state.assetCategoryTab)
+    ? state.assetCategoryTab
+    : ASSET_CATEGORIES[0].id;
+  state.assetCategoryTab = activeCategory;
+  if (els.assetTabs) {
+    const track = els.assetTabs.querySelector(".asset-tabs-track");
+    els.assetTabs.replaceChildren();
+    ASSET_CATEGORIES.forEach((category) => {
+      const count = state.assets.filter((asset) => asset.category === category.id).length;
+      const tab = document.createElement("button");
+      tab.type = "button";
+      tab.className = `asset-tab${category.id === activeCategory ? " active" : ""}`;
+      tab.dataset.category = category.id;
+      tab.id = `asset-tab-${category.id}`;
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-selected", String(category.id === activeCategory));
+      tab.setAttribute("aria-controls", `asset-panel-${category.id}`);
+      tab.innerHTML = `<span class="asset-tab-index">0${ASSET_CATEGORIES.indexOf(category) + 1}</span><span class="asset-tab-icon" aria-hidden="true"><i data-lucide="${category.icon}"></i></span><span class="asset-tab-label">${category.label}</span><span class="asset-tab-count">${count}</span>`;
+      tab.addEventListener("click", () => {
+        if (state.assetCategoryTab === category.id) return;
+        state.assetCategoryTab = category.id;
+        renderAssetStage();
+      });
+      els.assetTabs.append(tab);
+    });
+    if (track) els.assetTabs.append(track);
+  }
+  els.assetSections.replaceChildren();
+  const category = ASSET_CATEGORIES.find((item) => item.id === activeCategory);
+  if (category) {
+    const section = document.createElement("section");
+    section.className = "asset-section asset-section-active";
+    section.dataset.category = category.id;
+    section.id = `asset-panel-${category.id}`;
+    section.setAttribute("role", "tabpanel");
+    section.setAttribute("aria-labelledby", `asset-tab-${category.id}`);
+    const head = document.createElement("header");
+    head.className = "asset-section-head";
+    head.innerHTML = `<div><span class="asset-kicker">${category.english}</span><h3>${category.label}</h3></div><span>${state.assets.filter((asset) => asset.category === category.id).length} ITEMS</span>`;
+    const grid = document.createElement("div"); grid.className = "asset-grid";
+    const upload = document.createElement("button"); upload.type = "button"; upload.className = "asset-upload-card";
+    upload.innerHTML = '<i data-lucide="plus" aria-hidden="true"></i><strong>上传资产</strong><small>从本地图片开始</small>';
+    upload.addEventListener("click", () => openAssetModal({ category: category.id }));
+    grid.append(upload);
+    state.assets.filter((asset) => asset.category === category.id).forEach((asset) => grid.append(renderAssetCard(asset)));
+    section.append(head, grid); els.assetSections.append(section);
+  }
+  refreshIcons();
+}
+function renderAssetCard(asset) {
+  const card = document.createElement("article"); card.className = "asset-card";
+  const image = document.createElement("img"); image.className = "asset-card-image"; image.src = asset.dataUrl || ""; image.alt = asset.title || "资产";
+  const meta = document.createElement("div"); meta.className = "asset-card-meta";
+  const title = document.createElement("h4"); title.textContent = asset.title || "未命名资产";
+  const source = document.createElement("small"); source.textContent = asset.source?.type === "generation" ? "对话生成 · 独立副本" : "本地上传";
+  meta.append(title, source);
+  const actions = document.createElement("div"); actions.className = "asset-card-actions";
+  const rename = document.createElement("button"); rename.type = "button"; rename.innerHTML = '<i data-lucide="pencil" aria-hidden="true"></i><span class="asset-action-label">重命名</span>'; rename.title = "重命名"; rename.setAttribute("aria-label", `重命名 ${asset.title}`);
+  rename.addEventListener("click", async () => { const next = window.prompt("新的资产名称", asset.title); if (!next?.trim()) return; asset.title = uniqueAssetTitle(next, asset.id); asset.name = asset.title; asset.updatedAt = Date.now(); await putAsset(asset); state.assets = sortAssets(state.assets); renderAssetStage(); updateAssetTotal(); });
+  const del = document.createElement("button"); del.type = "button"; del.innerHTML = '<i data-lucide="trash-2" aria-hidden="true"></i><span class="asset-action-label">删除</span>'; del.title = "删除资产"; del.setAttribute("aria-label", `删除 ${asset.title}`);
+  del.addEventListener("click", () => askConfirm("删除这项资产？", "对话中的已插入 Tag 会保留图片快照。", async () => { await deleteAssetFromDb(asset.id); state.assets = state.assets.filter((item) => item.id !== asset.id); renderAssetStage(); updateAssetTotal(); }));
+  actions.append(rename, del); card.append(image, meta, actions); return card;
+}
+function updateAssetTotal() { if (els.assetTotal) els.assetTotal.textContent = `${state.assets.length} 项资产`; }
+function openAssetModal(options = {}) {
+  state.assetModalMode = options.mode || "upload"; state.assetModalCategory = options.category || "character"; state.assetModalImage = options.image || null; state.assetModalSource = options.source || null;
+  els.assetCategoryInput.value = state.assetModalCategory; els.assetModalCategory.textContent = `${assetCategory(state.assetModalCategory).english} / ${state.assetModalMode === "generation" ? "FROM CONVERSATION" : "LOCAL ASSET"}`;
+  els.assetNameInput.value = state.assetModalImage?.name || "";
+  els.assetFileSelected.classList.toggle("hidden", !state.assetModalImage); els.assetFilePicker.classList.toggle("hidden", Boolean(state.assetModalImage));
+  if (state.assetModalImage) { els.assetFilePreview.src = state.assetModalImage.dataUrl; els.assetFileName.textContent = state.assetModalImage.name || "生成图片"; }
+  els.assetModal.classList.remove("hidden"); els.assetNameInput.focus();
+}
+function closeAssetModal() { els.assetModal.classList.add("hidden"); state.assetModalImage = null; state.assetModalSource = null; }
+async function handleAssetFile(file) { if (!file?.type?.startsWith("image/")) return showToast("请选择图片文件", "error"); const dataUrl = await new Promise((resolve) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.readAsDataURL(file); }); state.assetModalImage = { dataUrl, name: file.name }; els.assetFilePreview.src = dataUrl; els.assetFileName.textContent = file.name; els.assetFileSelected.classList.remove("hidden"); els.assetFilePicker.classList.add("hidden"); if (!els.assetNameInput.value) els.assetNameInput.value = file.name.replace(/\.[^.]+$/, ""); }
+async function saveAssetFromModal() { if (!state.assetModalImage?.dataUrl) return showToast("请先选择图片", "error"); const title = uniqueAssetTitle(els.assetNameInput.value); const category = els.assetCategoryInput.value; const now = Date.now(); const asset = { id: uid("asset"), title, name: title, category, dataUrl: state.assetModalImage.dataUrl, source: state.assetModalSource || { type: "upload" }, createdAt: now, updatedAt: now }; await putAsset(asset); state.assets = sortAssets([...state.assets, asset]); closeAssetModal(); renderAssetStage(); updateAssetTotal(); showToast(`已添加资产「${title}」`); }
+function renderAssetPicker() { const list = state.assets.filter((asset) => state.assetPickerFilter === "all" || asset.category === state.assetPickerFilter); els.assetPickerGrid.replaceChildren(); if (!list.length) { els.assetPickerGrid.innerHTML = '<p class="asset-picker-empty">还没有资产，先去资产页上传一项。</p>'; return; } list.forEach((asset) => { const button = document.createElement("button"); button.type = "button"; button.className = "asset-picker-item"; button.innerHTML = `<img src="${asset.dataUrl}" alt=""><span>${escapeHtml(asset.title)}</span>`; button.addEventListener("click", () => { insertAssetMention(asset); closeAssetPicker(); }); els.assetPickerGrid.append(button); }); refreshIcons(); }
+function openAssetPicker() { state.assetPickerFilter = "all"; els.assetPickerModal.classList.remove("hidden"); renderAssetPicker(); }
+function closeAssetPicker() { els.assetPickerModal.classList.add("hidden"); els.prompt.focus(); }
 
 function dateLabel(timestamp) {
   const date = new Date(timestamp);
@@ -1224,7 +1520,7 @@ function syncDimensionsFromRatio() {
   updateDimensionPreview();
 }
 function setRatio(ratio) {
-  if (ratio === "original" && !state.sourceFiles.length) {
+  if (ratio === "original" && !totalReferenceCount()) {
     showToast("请先上传原图，再使用原图比例", "error");
     return;
   }
@@ -1246,7 +1542,7 @@ function getEffectiveGenerationMode() {
   if (state.mode === "mask") return "mask";
   if (state.mode === "characterTurnaround") return "characterTurnaround";
   if (state.mode === "sceneMultiView") return "sceneMultiView";
-  return state.sourceFiles.length ? "edit" : "generate";
+  return totalReferenceCount() ? "edit" : "generate";
 }
 function getPromptPlaceholder() {
   return SINGLE_REFERENCE_MODES.includes(state.mode)
@@ -1287,7 +1583,7 @@ function setMode(mode) {
   );
   els.maskEditor.classList.toggle(
     "hidden",
-    nextMode !== "mask" || !state.sourceFiles.length,
+    nextMode !== "mask" || !totalReferenceCount(),
   );
   document.querySelectorAll("[data-mode]").forEach((button) => {
     button.classList.toggle("active", button.dataset.mode === nextMode);
@@ -1298,12 +1594,13 @@ function setMode(mode) {
   renderAttachments();
 }
 function renderFileMeta() {
+  const total = totalReferenceCount();
   if (SINGLE_REFERENCE_MODES.includes(state.mode)) {
-    els.sourceMeta.textContent = `${state.sourceFiles.length} / 1 张参考图`;
+    els.sourceMeta.textContent = `${total} / 1 张参考图`;
     return;
   }
-  els.sourceMeta.textContent = state.sourceFiles.length
-    ? `${state.sourceFiles.length} / ${MAX_SOURCE_FILES} 张参考图`
+  els.sourceMeta.textContent = total
+    ? `${total} / ${MAX_SOURCE_FILES} 张参考图`
     : `最多 ${MAX_SOURCE_FILES} 张参考图`;
 }
 
@@ -1455,15 +1752,15 @@ function renderAttachments() {
 }
 function setSourceFiles(files) {
   const incoming = [...files].filter((file) => file.type.startsWith("image/"));
-  const incomingCount = state.sourceFiles.length + incoming.length;
+  const incomingCount = totalReferenceCount() + incoming.length;
   if (
     SINGLE_REFERENCE_MODES.includes(state.mode) &&
     incomingCount > 1
   ) {
-    showToast(`${modeLabels[state.mode]}只能保留 1 张参考图，请删除多余图片`, "error");
+    showToast(`${modeLabels[state.mode]}只能保留 1 张参考图（包含资产），请删除多余引用`, "error");
     return;
   }
-  const slots = Math.max(0, MAX_SOURCE_FILES - state.sourceFiles.length);
+  const slots = Math.max(0, MAX_SOURCE_FILES - totalReferenceCount());
   const added = incoming
     .slice(0, slots)
     .map((file) =>
@@ -2257,6 +2554,8 @@ function resetConversationStage() {
   state.draftProjectTitle = null;
   state.sourceFiles = [];
   state.pendingMentions = [];
+  state.pendingAssetMentions = [];
+  state.assetMentionRange = null;
   state.mentionCursor = -1;
   state.maskFile = null;
   state.mode = "default";
@@ -2274,12 +2573,14 @@ function resetConversationStage() {
   closeMentionPicker();
 }
 async function openNewConversation() {
+  setWorkspaceView("conversation");
   if (!activeProject() && state.projects.length)
     state.activeProjectId = state.projects[0].id;
   closeMobileHistory();
   resetConversationStage();
 }
 async function openConversation(id) {
+  setWorkspaceView("conversation");
   const conversation = state.conversations.find((item) => item.id === id);
   if (!conversation) return;
   // 打开历史对话时同步切到它所属的项目，避免侧栏高亮与内容不一致。
@@ -2298,6 +2599,8 @@ async function openConversation(id) {
   if (hasUnread) await saveConversation(conversation, { touchUpdatedAt: false });
   state.sourceFiles = [];
   state.pendingMentions = [];
+  state.pendingAssetMentions = [];
+  state.assetMentionRange = null;
   state.mentionCursor = -1;
   state.maskFile = null;
   state.mode = "default";
@@ -2449,6 +2752,27 @@ function renderMessage(message) {
         event.stopPropagation();
         useGeneratedImageAsReference(message, index, image);
       });
+      const addAsset = document.createElement("button");
+      addAsset.type = "button";
+      addAsset.className = "generated-add-asset";
+      addAsset.setAttribute("aria-label", `添加图片 ${index + 1} 到资产库`);
+      addAsset.title = "添加到资产库";
+      addAsset.innerHTML = `<svg class="generated-add-asset-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M4 7.5h16v12H4zM6 4.5h12l2 3H4l2-3Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+        <path d="M12 11v5M9.5 13.5h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+      </svg>`;
+      addAsset.addEventListener("click", (event) => {
+        event.stopPropagation();
+        openAssetModal({
+          mode: "generation",
+          image: { dataUrl: image.dataUrl, name: generatedFileName(message, index) },
+          source: {
+            type: "generation",
+            conversationId: state.activeConversationId,
+            messageId: message.id,
+          },
+        });
+      });
       const download = document.createElement("a");
       download.className = "generated-download";
       download.href = image.dataUrl;
@@ -2466,7 +2790,7 @@ function renderMessage(message) {
         event.stopPropagation();
         splitGeneratedGrid(message, index, image, splitGrid);
       });
-      wrap.append(img, useAsReference, splitGrid, download);
+      wrap.append(img, useAsReference, addAsset, splitGrid, download);
       images.append(wrap);
     });
     card.append(images);
@@ -2494,7 +2818,7 @@ function appendLoadingMessage(conversation, message) {
   scrollToBottom();
 }
 function getReferences() {
-  return state.sourceFiles.map((file, index) => ({
+  const refs = state.sourceFiles.map((file, index) => ({
     blob: sourceBlob(file),
     // Keep both the original Blob (for re-submission) and a stable preview
     // value when one is available. IndexedDB can structured-clone Blob/File
@@ -2505,6 +2829,15 @@ function getReferences() {
     name: file.name || `图${index + 1}`,
     index,
   }));
+  uniqueAssetMentions().forEach((mention, index) => refs.push({
+    dataUrl: mention.dataUrl,
+    previewDataUrl: mention.dataUrl,
+    name: `资产：${mention.title}`,
+    assetId: mention.assetId,
+    assetTitle: mention.title,
+    index: state.sourceFiles.length + index,
+  }));
+  return refs;
 }
 function editMessage(message) {
   state.mode = ["mask", ...SINGLE_REFERENCE_MODES].includes(message.mode)
@@ -2516,7 +2849,10 @@ function editMessage(message) {
   state.count = Number(message.count || 1);
   state.width = Number(message.width || calculateDimensions().width);
   state.height = Number(message.height || calculateDimensions().height);
-  state.sourceFiles = (message.references || []).map((reference, index) => ({
+  const allReferences = message.references || [];
+  const referenceAssets = allReferences.filter((reference) => reference.assetId || reference.assetTitle);
+  const sourceReferences = allReferences.filter((reference) => !reference.assetId && !reference.assetTitle);
+  state.sourceFiles = sourceReferences.map((reference, index) => ({
     name: reference.name || `图${index + 1}`,
     blob: reference.blob,
     dataUrl: reference.dataUrl || "",
@@ -2535,6 +2871,17 @@ function editMessage(message) {
     });
   }
   setPromptText(editPrompt, message.mentionIndexes || []);
+  const restoredAssets = message.assetMentions?.length
+    ? message.assetMentions
+    : referenceAssets.map((reference) => ({
+        assetId: reference.assetId || "",
+        title: reference.assetTitle || reference.name || "未命名资产",
+        dataUrl: reference.dataUrl || reference.previewDataUrl || "",
+      }));
+  restoredAssets.forEach((asset) => {
+    els.prompt.append(document.createTextNode(" "), createAssetMention(asset));
+  });
+  syncPendingMentions();
   state.mentionCursor = -1;
   els.prompt.dispatchEvent(new Event("input"));
   els.resolution.value = state.resolution;
@@ -2569,19 +2916,22 @@ async function submitGeneration() {
   }
   if (state.maskEditorOpen) saveActiveMask();
   syncPendingMentions();
+  const referenceCount = totalReferenceCount();
   const rawPrompt = getPromptText(false).trim();
   const effectiveMode = getEffectiveGenerationMode();
   // 角色三视图 / 场景多视角可仅依赖参考图与后端模板生成，提示词改为可选。
   if (!rawPrompt && !SINGLE_REFERENCE_MODES.includes(effectiveMode))
     return showToast("请先输入提示词", "error");
-  if (SINGLE_REFERENCE_MODES.includes(effectiveMode) && state.sourceFiles.length !== 1)
-    return showToast(`${modeLabels[effectiveMode]}必须传入 1 张参考图`, "error");
-  if ((effectiveMode === "edit" || effectiveMode === "mask") && !state.sourceFiles.length)
+  if (SINGLE_REFERENCE_MODES.includes(effectiveMode) && referenceCount !== 1)
+    return showToast(`${modeLabels[effectiveMode]}必须传入 1 张参考图（包含资产）`, "error");
+  if ((effectiveMode === "edit" || effectiveMode === "mask") && !state.sourceFiles.length && !state.pendingAssetMentions.length)
     return showToast("请先上传原图", "error");
   if (effectiveMode === "mask" && !state.sourceFiles.some((file) => file.maskDataUrl))
     return showToast("请先编辑并保存至少一个蒙版", "error");
   if (effectiveMode === "mask" && !(await validateMaskSources()))
     return showToast(MASK_EDITABLE_ERROR, "error");
+  if (referenceCount > MAX_SOURCE_FILES)
+    return showToast(`最多只能使用 ${MAX_SOURCE_FILES} 张参考图（包含资产）`, "error");
   // 特殊单参考图模式的模板由后端拼接（prompts/ 目录是唯一来源），
   // 前端只提交用户自己的描述，因此这里始终用带 @ 引用的完整提示词文本。
   const prompt = getPromptText(true).trim();
@@ -2605,6 +2955,7 @@ async function submitGeneration() {
     size: `${dimensions.width}x${dimensions.height}`,
     inputFidelity: Boolean(els.fidelity.checked),
     mentionIndexes: state.pendingMentions.map((mention) => mention.index),
+    assetMentions: state.pendingAssetMentions.map((mention) => ({ ...mention })),
     references: getReferences(),
     createdAt: Date.now(),
   };
@@ -2725,6 +3076,21 @@ els.form.addEventListener("submit", (event) => {
   event.preventDefault();
   submitGeneration();
 });
+els.conversationNav?.addEventListener("click", () => setWorkspaceView("conversation"));
+els.assetNav?.addEventListener("click", () => setWorkspaceView("assets"));
+els.assetButton?.addEventListener("pointerdown", () => { state.assetMentionRange = currentPromptRange()?.cloneRange() || state.assetMentionRange; });
+els.assetButton?.addEventListener("mousedown", (event) => { event.preventDefault(); state.assetMentionRange = currentPromptRange()?.cloneRange() || state.assetMentionRange; });
+els.assetButton?.addEventListener("click", openAssetPicker);
+els.assetFilePicker?.addEventListener("click", () => els.assetFileInput.click());
+els.assetFileChange?.addEventListener("click", () => els.assetFileInput.click());
+els.assetFileInput?.addEventListener("change", (event) => { handleAssetFile(event.target.files?.[0]); event.target.value = ""; });
+els.cancelAssetModal?.addEventListener("click", closeAssetModal);
+els.closeAssetModal?.addEventListener("click", closeAssetModal);
+els.assetModal?.addEventListener("click", (event) => { if (event.target.matches("[data-asset-close]")) closeAssetModal(); });
+els.assetForm?.addEventListener("submit", (event) => { event.preventDefault(); saveAssetFromModal(); });
+els.closeAssetPicker?.addEventListener("click", closeAssetPicker);
+els.assetPickerModal?.addEventListener("click", (event) => { if (event.target.matches("[data-asset-picker-close]")) closeAssetPicker(); });
+els.assetFilterTabs?.addEventListener("click", (event) => { const button = event.target.closest("[data-asset-filter]"); if (!button) return; state.assetPickerFilter = button.dataset.assetFilter; els.assetFilterTabs.querySelectorAll("[data-asset-filter]").forEach((item) => { const active = item === button; item.classList.toggle("active", active); item.setAttribute("aria-selected", String(active)); }); renderAssetPicker(); });
 els.sourceInput.addEventListener("change", (event) => {
   setSourceFiles(event.target.files);
   els.sourceInput.value = "";
@@ -2743,6 +3109,7 @@ els.prompt.addEventListener("input", () => {
   syncPendingMentions();
   const value = getPromptText(false);
   els.promptCount.textContent = `${value.length} / 4000`;
+  renderFileMeta();
   const range = currentPromptRange();
   if (range && previousCharacter(range) === "@") {
     state.mentionRange = range.cloneRange();
@@ -2853,18 +3220,25 @@ document.querySelectorAll("[data-mode]").forEach((button) =>
   button.addEventListener("click", () => {
     if (
       SINGLE_REFERENCE_MODES.includes(button.dataset.mode) &&
-      state.sourceFiles.length > 1
+      totalReferenceCount() > 1
     ) {
-      const firstImage = state.sourceFiles[0];
-      state.sourceFiles = [firstImage];
-      els.prompt.querySelectorAll(".inline-mention").forEach((mention) => {
-        const mentionIndex = Number(mention.dataset.index);
-        if (mentionIndex === 0) updateInlineMention(mention, 0);
-        else mention.remove();
-      });
+      // Single-reference presets accept either one uploaded image or one
+      // asset. Preserve the first reference in the same order used by the
+      // request, then remove every additional source/asset reference.
+      if (state.sourceFiles.length) {
+        state.sourceFiles = [state.sourceFiles[0]];
+        els.prompt.querySelectorAll(".inline-mention").forEach((mention) => {
+          if (Number(mention.dataset.index) === 0) updateInlineMention(mention, 0);
+          else mention.remove();
+        });
+        els.prompt.querySelectorAll(".asset-mention").forEach((mention) => mention.remove());
+      } else {
+        const assetMentions = [...els.prompt.querySelectorAll(".asset-mention")];
+        assetMentions.slice(1).forEach((mention) => mention.remove());
+      }
       syncPendingMentions();
       renderMentionTags();
-      showToast(`已为${modeLabels[button.dataset.mode]}保留第一张参考图`);
+      showToast(`已为${modeLabels[button.dataset.mode]}保留第一张参考图（包含资产）`);
     }
     setMode(button.dataset.mode);
     if (button.closest(".mode-options"))
@@ -3382,6 +3756,9 @@ async function init() {
     // 先恢复项目层，再恢复会话；项目层允许为空，由 ensureProject 补「默认项目」。
     state.projects = sortProjects(await getProjects());
     state.conversations = sortConversations(await getConversations());
+    state.assets = sortAssets(await getAssets());
+    updateAssetTotal();
+    renderAssetStage();
     await recoverInterruptedGenerations();
     await ensureProject();
     if (!state.conversations.length) {

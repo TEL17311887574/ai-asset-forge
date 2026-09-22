@@ -26,6 +26,13 @@
         <button class="new-chat" id="newConversation" type="button">
           <i data-lucide="plus" aria-hidden="true"></i><span>新建对话</span><kbd>⌘ K</kbd>
         </button>
+        <nav class="sidebar-nav" aria-label="工作台导航">
+          <button class="sidebar-nav-item asset-sidebar-item" id="assetNav" type="button">
+            <span class="sidebar-nav-icon"><i data-lucide="layers-3" aria-hidden="true"></i></span>
+            <span class="sidebar-nav-copy"><strong>资产库</strong><small>角色 · 场景 · 道具</small></span>
+            <span class="sidebar-nav-count" id="assetTotal">0</span>
+          </button>
+        </nav>
         <div class="sidebar-label">
           <span>项目</span>
           <span class="sidebar-label-actions">
@@ -100,6 +107,21 @@
           <div class="messages" id="messages" aria-live="polite"></div>
         </section>
 
+        <section class="asset-stage hidden" id="assetStage" aria-labelledby="assetStageTitle">
+          <div class="asset-stage-intro">
+            <div>
+              <span class="asset-kicker">LOCAL ASSET ARCHIVE / 03 COLLECTIONS</span>
+              <h2 id="assetStageTitle">把稳定的视觉，<em>留在手边。</em></h2>
+              <p>将角色、场景与道具整理成可复用的视觉素材，随时带回下一段对话。</p>
+            </div>
+            <div class="asset-stage-mark" aria-hidden="true"><span>ASSET</span><strong>∞</strong></div>
+          </div>
+          <div class="asset-tabs" id="assetTabs" role="tablist" aria-label="资产分类">
+            <span class="asset-tabs-track" aria-hidden="true"></span>
+          </div>
+          <div class="asset-sections" id="assetSections"></div>
+        </section>
+
         <div class="composer-wrap" id="composerWrap">
           <div class="composer-hint" id="composerHint">
             提示词会和本次对话一起保存在当前浏览器
@@ -161,9 +183,11 @@
                 </button><button class="tool-pill" id="modeButton" type="button" aria-controls="modePopover" aria-expanded="false">
                   <span class="tool-icon"><i data-lucide="image" aria-hidden="true"></i></span
                   ><span id="modeLabel">默认</span></button
+                ><button class="tool-pill asset-tool-button" id="assetButton" type="button" title="插入资产" aria-label="插入资产">
+                  <span class="tool-icon"><i data-lucide="layers-3" aria-hidden="true"></i></span><span>资产</span></button
                 ><button class="tool-pill" id="settingsButton" type="button" aria-controls="settingsPopover" aria-expanded="false">
                   <span class="tool-icon"><i data-lucide="sliders-horizontal" aria-hidden="true"></i></span><span>参数</span></button><span class="attachment-count" id="sourceMeta"
-                  >最多 16 张参考图</span
+                  >最多 16 张参考图（包含资产）</span
                 >
               </div>
               <div class="toolbar-right">
@@ -180,6 +204,74 @@
     </div>
 
     <button class="sidebar-scrim hidden" id="sidebarScrim" type="button" aria-label="关闭侧栏"></button>
+    <div class="asset-modal hidden" id="assetModal" role="dialog" aria-modal="true" aria-labelledby="assetModalTitle">
+      <button class="asset-modal-backdrop" type="button" data-asset-close aria-label="关闭添加资产窗口"></button>
+      <section class="asset-modal-panel">
+        <header class="asset-modal-head">
+          <div>
+            <span class="asset-kicker" id="assetModalCategory">CHARACTER / LOCAL ASSET</span>
+            <h2 id="assetModalTitle">添加资产</h2>
+            <p>图片会独立保存在资产库中，不受来源对话删除影响。</p>
+          </div>
+          <div class="asset-modal-head-actions">
+            <span class="asset-modal-note" aria-hidden="true">ASSET FORGE / LOCAL ARCHIVE</span>
+            <button class="icon-button" id="closeAssetModal" type="button" aria-label="关闭添加资产窗口"><span aria-hidden="true">×</span></button>
+          </div>
+        </header>
+        <form class="asset-form" id="assetForm">
+          <input id="assetFileInput" type="file" accept="image/png,image/jpeg,image/webp" hidden />
+          <button class="asset-file-drop" id="assetFilePicker" type="button">
+            <span class="asset-file-art" aria-hidden="true"><i data-lucide="upload"></i></span>
+            <span class="asset-file-copy"><strong>选择本地图片</strong><small>PNG、JPG 或 WEBP</small></span>
+            <i class="asset-file-arrow" data-lucide="arrow-up-right" aria-hidden="true"></i>
+          </button>
+          <div class="asset-file-selected hidden" id="assetFileSelected">
+            <img id="assetFilePreview" alt="待添加的资产图片" />
+            <div><strong id="assetFileName"></strong><small>已选择，可继续修改名称</small></div>
+            <button type="button" id="assetFileChange">更换</button>
+          </div>
+          <label class="asset-name-field" for="assetNameInput">
+            <span>资产名称</span>
+            <input id="assetNameInput" type="text" maxlength="80" autocomplete="off" placeholder="例如：物业维修员 · 老王" required />
+          </label>
+          <label class="asset-name-field" for="assetCategoryInput">
+            <span>资产分类</span>
+            <select id="assetCategoryInput">
+              <option value="character">角色</option>
+              <option value="scene">场景</option>
+              <option value="prop">道具</option>
+            </select>
+          </label>
+          <footer class="asset-modal-foot">
+            <span id="assetModalHint">名称重复时会自动追加编号</span>
+            <div><button class="cancel-button" id="cancelAssetModal" type="button">取消</button><button class="primary-button" id="saveAsset" type="submit"><i data-lucide="archive" aria-hidden="true"></i>添加资产</button></div>
+          </footer>
+        </form>
+      </section>
+    </div>
+    <div class="asset-picker-modal hidden" id="assetPickerModal" role="dialog" aria-modal="true" aria-labelledby="assetPickerTitle">
+      <button class="asset-modal-backdrop" type="button" data-asset-picker-close aria-label="关闭资产选择"></button>
+      <section class="asset-picker-panel">
+        <header class="asset-modal-head">
+          <div>
+            <span class="asset-kicker">REFERENCE ASSETS / INSERT AT CURSOR</span>
+            <h2 id="assetPickerTitle">选择一项资产</h2>
+            <p>选中后会以图片参考 Tag 插入当前光标位置。</p>
+          </div>
+          <div class="asset-modal-head-actions">
+            <span class="asset-modal-note" aria-hidden="true">ASSET FORGE / LOCAL ARCHIVE</span>
+            <button class="icon-button" id="closeAssetPicker" type="button" aria-label="关闭资产选择"><span aria-hidden="true">×</span></button>
+          </div>
+        </header>
+        <div class="asset-filter-tabs" id="assetFilterTabs" role="tablist" aria-label="资产分类筛选">
+          <button type="button" class="active" data-asset-filter="all" role="tab" aria-selected="true">全部</button>
+          <button type="button" data-asset-filter="character" role="tab" aria-selected="false">角色</button>
+          <button type="button" data-asset-filter="scene" role="tab" aria-selected="false">场景</button>
+          <button type="button" data-asset-filter="prop" role="tab" aria-selected="false">道具</button>
+        </div>
+        <div class="asset-picker-grid" id="assetPickerGrid" aria-live="polite"></div>
+      </section>
+    </div>
     <div class="confirm-backdrop hidden" id="confirmBackdrop">
       <div
         class="confirm-dialog"
@@ -380,7 +472,7 @@
           </span>
           <span class="mode-option-copy">
             <span class="mode-option-title">角色三视图</span>
-            <span class="mode-option-desc">需 1 张参考图生成三视图</span>
+            <span class="mode-option-desc">需 1 张参考图（包含资产）生成三视图</span>
           </span>
           <span class="mode-option-state" aria-hidden="true">
             <i data-lucide="circle"></i>
@@ -392,7 +484,7 @@
           </span>
           <span class="mode-option-copy">
             <span class="mode-option-title">场景多视角</span>
-            <span class="mode-option-desc">需 1 张参考图生成 2×2 场景视角</span>
+            <span class="mode-option-desc">需 1 张参考图（包含资产）生成 2×2 场景视角</span>
           </span>
           <span class="mode-option-state" aria-hidden="true">
             <i data-lucide="circle"></i>
