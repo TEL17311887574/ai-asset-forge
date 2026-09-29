@@ -1,4 +1,19 @@
-const MAX_SOURCE_FILES = 16;
+import { AUTH_STORAGE_KEY, CONFIG } from "./config.js";
+import {
+  cleanPrompt,
+  editImage,
+  generateImage,
+  safeCount,
+  safeInputFidelity,
+  safeModel,
+  safeOptionalPrompt,
+  safeQuality,
+  safeSize,
+} from "./api-client.js";
+import { buildCharacterTurnaroundPrompt, buildSceneMultiViewPrompt } from "./prompt-templates.js";
+import { splitGridImage } from "./grid-splitter.js";
+
+const MAX_SOURCE_FILES = CONFIG.maxSourceFiles;
 const DB_NAME = "gpt-image-2-studio";
 const DB_VERSION = 5;
 const PROJECT_STORE = "projects";
@@ -362,17 +377,51 @@ function closeAuthModal() {
   authReturnFocus?.focus?.();
   authReturnFocus = null;
 }
-async function refreshAuthSession() {
+// ---------------------------------------------------------------- 本地凭据
+// 纯静态站点没有后端，凭据只能存在浏览器 localStorage 中（明文）。
+// 原方案是后端 Fernet 加密 + httpOnly Cookie，前端读不到；现在 Key 对页面
+// 脚本可见，安全性下降是纯静态架构的固有代价。
+function loadAuth() {
   try {
-    const response = await fetch("/api/auth/session");
-    const data = await response.json();
-    setAuthenticated(Boolean(data.authenticated));
-    return Boolean(data.authenticated);
+    const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.apiKey === "string" && parsed.apiKey && parsed.baseURL) {
+      return parsed;
+    }
   } catch {
-    setAuthenticated(false);
-    els.connection.innerHTML = '<span class="dot bad"></span>服务未连接';
-    return false;
+    // localStorage 被禁用或内容损坏时按未登录处理。
   }
+  return null;
+}
+function saveAuth(apiKey, baseURL) {
+  localStorage.setItem(
+    AUTH_STORAGE_KEY,
+    JSON.stringify({ apiKey, baseURL, savedAt: Date.now() }),
+  );
+}
+function clearAuth() {
+  localStorage.removeItem(AUTH_STORAGE_KEY);
+}
+/** 校验并规范化 Base URL；对应原后端 auth/router.py 的 _normalize_base_url。 */
+function normalizeBaseURL(value) {
+  let url;
+  try {
+    url = new URL(String(value).trim());
+  } catch {
+    throw new Error("Base URL 格式不正确。");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("Base URL 必须使用 http 或 https。");
+  }
+  // 与原后端一致：只去掉末尾斜杠，不自动补 /v1。
+  return url.toString().replace(/\/+$/, "");
+}
+async function refreshAuthSession() {
+  // 原实现请求 /api/auth/session；纯静态下直接读本地凭据。
+  const session = loadAuth();
+  setAuthenticated(Boolean(session));
+  return Boolean(session);
 }
 function stepImageLightbox(direction) {
   if (!lightboxState.items.length) return;
@@ -802,23 +851,9 @@ async function splitGeneratedGrid(message, index, image, button) {
   button.disabled = true;
   button.innerHTML = "<span>…</span>";
   try {
-    const data = new FormData();
-    data.append("image", blob, generatedFileName(message, index));
-    const response = await fetch("/api/split-grid", {
-      method: "POST",
-      body: data,
-    });
-    const result = await response.json();
-    if (!response.ok) {
-      const requestError = new Error(result.error || "宫格图拆分失败");
-      requestError.status = response.status;
-      throw requestError;
-    }
-    const splitImages = (result.images || []).map((item) => ({
-      dataUrl: item.dataUrl,
-      name: item.name || `grid-split-${Date.now()}.jpg`,
-    }));
-    if (!splitImages.length) throw new Error(result.error || "宫格图拆分失败");
+    // 原实现上传到 /api/split-grid 由后端 Pillow 拆分；现在直接在浏览器内完成。
+    const splitImages = await splitGridImage(blob);
+    if (!splitImages.length) throw new Error("宫格图拆分失败");
     // 保留每次拆分结果，便于用户在同一生成图下回看历史拆分。
     if (!Array.isArray(message.splitHistory)) message.splitHistory = [];
     message.splitHistory.push({
@@ -3018,59 +3053,66 @@ async function submitGeneration() {
 async function runGenerationTask(conversation, generation, settings, effectiveMode) {
   const taskId = generation.id;
   try {
-    let response;
+    const session = loadAuth();
+    if (!session) {
+      const authError = new Error("未登录或凭据已失效，请重新登录。");
+      authError.status = 401;
+      throw authError;
+    }
+    const { apiKey, baseURL } = session;
+
+    let images;
     if (effectiveMode === "generate") {
-      response = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt: settings.prompt,
-          size: settings.size,
-          quality: settings.quality,
-          n: settings.count,
-          model: settings.model,
-        }),
+      // 文生图：直连 /images/generations。
+      images = await generateImage({
+        apiKey,
+        baseURL,
+        prompt: cleanPrompt(settings.prompt),
+        size: safeSize(settings.size),
+        quality: safeQuality(settings.quality),
+        n: safeCount(settings.count),
+        model: safeModel(settings.model),
       });
     } else {
-      const data = new FormData();
+      // 图生图：直连 /images/edits。
       // 使用提交时的引用快照，切换对话/继续上传不会影响后台任务。
       const sourceFiles = await Promise.all(settings.references.map(toUploadFile));
-      sourceFiles.forEach((file) =>
-        data.append("image", file, file.name || `image-${Date.now()}.png`),
-      );
-      Object.entries({
-        prompt: settings.prompt,
-        size: settings.size,
-        quality: settings.quality,
-        n: settings.count,
-        mode: effectiveMode,
-        model: settings.model,
-      }).forEach(([key, value]) => data.append(key, value));
-      if (settings.inputFidelity) data.append("input_fidelity", "high");
-      if (effectiveMode === "mask") {
-        const blob = dataUrlBlob(settings.references[0]?.maskDataUrl);
-        if (blob) data.append("mask", blob, "mask.png");
-        settings.references.slice(1).forEach((source, index) => {
-          const extraMask = dataUrlBlob(source.maskDataUrl);
-          if (extraMask) data.append("mask[]", extraMask, `mask-${index + 2}.png`);
-        });
-        data.append(
-          "mask_count",
-          String(settings.references.filter((source) => source.maskDataUrl).length),
-        );
+
+      // 原后端会在下面两种预设模式下把 prompts/ 模板与用户描述拼接；
+      // 纯静态站点没有服务端，改由前端调用同一套拼接逻辑。
+      let finalPrompt;
+      if (effectiveMode === "characterTurnaround") {
+        finalPrompt = buildCharacterTurnaroundPrompt(safeOptionalPrompt(settings.prompt));
+      } else if (effectiveMode === "sceneMultiView") {
+        finalPrompt = buildSceneMultiViewPrompt(safeOptionalPrompt(settings.prompt));
+      } else {
+        finalPrompt = cleanPrompt(settings.prompt);
       }
-      response = await fetch("/api/edit", { method: "POST", body: data });
+
+      // 蒙版：沿用原行为，只取第一张引用图的蒙版。
+      // （原后端只声明了单个 mask 参数，前端另外发送的 mask[] / mask_count
+      //   本来就收不到，这里保持一致，不在迁移中改变该行为。）
+      const mask =
+        effectiveMode === "mask" ? dataUrlBlob(settings.references[0]?.maskDataUrl) : null;
+
+      images = await editImage({
+        apiKey,
+        baseURL,
+        prompt: finalPrompt,
+        images: sourceFiles,
+        size: safeSize(settings.size),
+        quality: safeQuality(settings.quality),
+        inputFidelity: settings.inputFidelity ? "high" : safeInputFidelity(null),
+        n: safeCount(settings.count),
+        mask: mask || null,
+        model: safeModel(settings.model),
+      });
     }
-    const result = await response.json();
-    if (!response.ok) {
-      const requestError = new Error(result.error || "请求失败");
-      requestError.status = response.status;
-      throw requestError;
-    }
+
     // 用户可能在请求返回前删除了项目/对话；此时不把幽灵结果写回数据库。
     if (!state.conversations.some((item) => item.id === conversation.id)) return;
     generation.status = "done";
-    generation.images = result.images || [];
+    generation.images = images || [];
     generation.completedAt = Date.now();
     generation.unread = state.activeConversationId !== conversation.id;
     await saveConversation(conversation);
@@ -3664,32 +3706,25 @@ els.maskModal.addEventListener("click", (event) => {
 });
 els.authButton.addEventListener("click", async () => {
   if (!state.authenticated) return openAuthModal();
-  try {
-    await fetch("/api/auth/logout", { method: "POST" });
-  } finally {
-    setAuthenticated(false);
-    showToast("已退出登录，历史对话仍保留在本机");
-  }
+  clearAuth();
+  setAuthenticated(false);
+  showToast("已退出登录，历史对话仍保留在本机");
 });
 els.authForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   els.authSubmit.disabled = true;
   els.authSubmit.querySelector("span").textContent = "正在登录…";
   try {
-    const response = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        apiKey: els.authApiKey.value,
-        baseURL: els.authBaseURL.value,
-      }),
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "登录失败");
+    const apiKey = els.authApiKey.value.trim();
+    if (!apiKey) throw new Error("请输入 API Key。");
+    if (apiKey.length > 500) throw new Error("API Key 长度不符合要求。");
+    const baseURL = normalizeBaseURL(els.authBaseURL.value);
+    // 纯静态站点没有服务端可以校验凭据，这里只做格式检查后保存到本机。
+    saveAuth(apiKey, baseURL);
     setAuthenticated(true);
     closeAuthModal();
     await checkHealth();
-    showToast("登录成功，30 天内无需重复登录");
+    showToast("登录成功，凭据已保存到本机浏览器");
   } catch (error) {
     showToast(error.message, "error");
     els.authApiKey.focus();
@@ -3744,39 +3779,26 @@ els.confirmAction.addEventListener("click", async () => {
   if (callback) await callback();
 });
 async function checkHealth() {
-  if (!state.authenticated) {
+  // 原实现请求 /api/health；纯静态下没有后端可探测，
+  // 直接按本地是否存有凭据显示连接状态。
+  const session = loadAuth();
+  if (!state.authenticated || !session) {
     setAuthenticated(false);
+    els.connection.innerHTML = '<span class="dot bad"></span>等待登录';
     return;
   }
-  try {
-    const response = await fetch("/api/health");
-    const data = await response.json();
-    if (response.status === 401) {
-      setAuthenticated(false);
-      return;
-    }
-    els.connection.innerHTML = `<span class="dot ${data.configured ? "ok" : "bad"}"></span>${data.configured ? "API 已登录" : "等待登录"}`;
-  } catch {
-    els.connection.innerHTML = '<span class="dot bad"></span>服务未连接';
-  }
+  els.connection.innerHTML = '<span class="dot ok"></span>API 已登录';
 }
 async function loadModels() {
-  try {
-    const response = await fetch("/api/models");
-    if (!response.ok) return;
-    const data = await response.json();
-    if (Array.isArray(data.available) && data.available.length) {
-      state.availableModels = data.available;
-      // 若当前模型不在服务端白名单中，回退到服务端默认值。
-      if (!data.available.includes(state.model)) {
-        state.model = data.default || data.available[0];
-      }
-      renderModelOptions();
-    }
-  } catch (error) {
-    // 模型列表不可用时保留默认值，不打断页面初始化。
-    console.warn("加载模型列表失败：", error);
+  // 原实现请求 /api/models；纯静态下模型列表是前端常量。
+  const available = CONFIG.availableModels;
+  if (!Array.isArray(available) || !available.length) return;
+  state.availableModels = available;
+  // 若当前模型不在白名单中，回退到默认值。
+  if (!available.includes(state.model)) {
+    state.model = CONFIG.defaultModel || available[0];
   }
+  renderModelOptions();
 }
 
 async function init() {
