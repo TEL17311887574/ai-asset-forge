@@ -1135,7 +1135,7 @@ button {
   cursor: text;
   font-size: 13px;
   line-height: 1.55;
-  max-height: 256px;
+  max-height: 128px;
   min-height: 42px;
   outline: 0;
   padding: 5px 0;

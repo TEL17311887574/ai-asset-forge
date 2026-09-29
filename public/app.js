@@ -257,7 +257,7 @@ let maskLoadToken = 0;
 let maskDirty = false;
 let brushCursorPoint = null;
 let authReturnFocus = null;
-const lightboxState = { items: [], index: 0, returnFocus: null, objectUrls: [] };
+const lightboxState = { items: [], index: 0, returnFocus: null };
 
 function uid(prefix = "id") {
   const random =
@@ -274,26 +274,12 @@ function imageUrl(item) {
 }
 function originalImageUrl(item) {
   const blob = sourceBlob(item);
-  if (blob instanceof Blob) return URL.createObjectURL(blob);
-  return item?.originalDataUrl || item?.dataUrl || item?.preview || item?.previewDataUrl || "";
-}
-function lightboxImageUrl(item) {
-  const blob = sourceBlob(item);
-  if (blob instanceof Blob) return URL.createObjectURL(blob);
-  return originalImageUrl(item);
-}
-function releaseLightboxObjectUrls() {
-  lightboxState.objectUrls.forEach((url) => URL.revokeObjectURL(url));
-  lightboxState.objectUrls = [];
+  return blob instanceof Blob ? URL.createObjectURL(blob) : imageUrl(item);
 }
 function openImageLightbox(items, index = 0) {
-  releaseLightboxObjectUrls();
   const usableItems = items.filter((item) => item?.src);
   if (!usableItems.length) return;
   lightboxState.items = usableItems;
-  lightboxState.objectUrls = usableItems
-    .map((item) => item.src)
-    .filter((src) => /^blob:/.test(src));
   lightboxState.index = Math.max(0, Math.min(index, usableItems.length - 1));
   lightboxState.returnFocus = document.activeElement;
   renderImageLightbox();
@@ -325,7 +311,6 @@ function closeImageLightbox() {
   els.imageLightbox.classList.add("hidden");
   document.body.classList.remove("lightbox-open");
   const returnFocus = lightboxState.returnFocus;
-  releaseLightboxObjectUrls();
   lightboxState.items = [];
   lightboxState.returnFocus = null;
   returnFocus?.focus?.();
@@ -622,7 +607,7 @@ function createInlineMention(index, restoring = false) {
     thumbnail,
     () =>
       state.sourceFiles.map((source) => ({
-        src: lightboxImageUrl(source),
+        src: imageUrl(source),
         alt: source.name || "参考图",
         caption: source.name || "参考图",
       })),
@@ -1686,7 +1671,7 @@ function renderAttachments() {
     bindImagePreview(
       img,
       () => state.sourceFiles.map((source) => ({
-        src: lightboxImageUrl(source),
+        src: imageUrl(source),
         alt: source.name || "参考图",
         caption: source.name || "参考图",
       })),
@@ -2587,18 +2572,6 @@ function resetConversationStage() {
   updateProjectPill();
   closeMentionPicker();
 }
-/** 发送成功落库后清空当前提示词编辑器，但保留已上传参考图供下一次复用。 */
-function clearPromptAfterSubmit() {
-  state.pendingMentions = [];
-  state.pendingAssetMentions = [];
-  state.mentionRange = null;
-  state.assetMentionRange = null;
-  state.mentionCursor = -1;
-  setPromptText("");
-  closeMentionPicker();
-  els.prompt.dispatchEvent(new Event("input"));
-  els.prompt.focus();
-}
 async function openNewConversation() {
   setWorkspaceView("conversation");
   if (!activeProject() && state.projects.length)
@@ -2715,7 +2688,7 @@ function renderMessage(message) {
       img,
       () =>
         (message.references || []).map((item) => ({
-          src: lightboxImageUrl(item),
+          src: imageUrl(item),
           alt: item.name || "参考图",
           caption: item.name || "参考图",
         })),
@@ -3004,7 +2977,6 @@ async function submitGeneration() {
   await saveConversation(conversation);
   renderMessage(userMessage);
   renderMessage(generation);
-  clearPromptAfterSubmit();
   scrollToBottom();
   const taskId = generation.id;
   state.generationTasks.set(taskId, { conversationId: conversation.id, projectId: conversation.projectId });
