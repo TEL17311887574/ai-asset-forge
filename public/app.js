@@ -1,10 +1,33 @@
 const MAX_SOURCE_FILES = 16;
+
+// Workers 版：宫格拆分在前端本地完成（原 /api/split-grid 依赖 Pillow，
+// Cloudflare Workers 无法运行），模块与后端 Python 版算法逐像素一致。
+import { splitGridImage } from "./grid-splitter.js";
+// Key 凭据保险库：数据在本机 IndexedDB，服务端零存储。
+import {
+  activateCredential,
+  addCredential,
+  deleteAllCredentials,
+  deleteCredential,
+  getActiveCredential,
+  getActiveKeyId,
+  listCredentials,
+  renameCredential,
+  setActiveKeyId,
+  setVaultDbProvider,
+} from "./key-vault.js";
+
 const DB_NAME = "gpt-image-2-studio";
-const DB_VERSION = 5;
+const DB_VERSION = 6;
 const PROJECT_STORE = "projects";
 const CONVERSATION_STORE = "conversations";
 const LEGACY_STORE = "generations";
 const ASSET_STORE = "assets";
+const CREDENTIAL_STORE = "credentials";
+
+// key-vault.js 与本文件共用同一个数据库连接（避免双连接版本冲突）。
+// 必须在 CREDENTIAL_STORE 声明之后调用（const 无提升）。
+setVaultDbProvider(openDb, CREDENTIAL_STORE);
 const ASSET_CATEGORIES = Object.freeze([
   { id: "character", label: "角色", english: "CHARACTERS", icon: "user-round" },
   { id: "scene", label: "场景", english: "SCENES", icon: "landmark" },
@@ -112,6 +135,8 @@ const state = {
   activeMaskIndex: 0,
   maskEditorOpen: false,
   authenticated: false,
+  authKeys: [],
+  activeCredentialId: null,
   model: "gpt-image-2",
   availableModels: [],
   assetModalMode: "upload",
@@ -201,7 +226,16 @@ const els = {
   sidebarScrim: $("#sidebarScrim"),
   authButton: $("#authButton"),
   authModal: $("#authModal"),
+  authManager: $("#authManager"),
+  authManagerStatus: $("#authManagerStatus"),
+  authManagerCount: $("#authManagerCount"),
+  authKeyList: $("#authKeyList"),
+  authAddKey: $("#authAddKey"),
+  authLogoutCurrent: $("#authLogoutCurrent"),
+  authLogoutAll: $("#authLogoutAll"),
+  authBackToManager: $("#authBackToManager"),
   authForm: $("#authForm"),
+  authKeyTitle: $("#authKeyTitle"),
   authApiKey: $("#authApiKey"),
   authBaseURL: $("#authBaseURL"),
   authKeyToggle: $("#authKeyToggle"),
@@ -315,44 +349,184 @@ function closeImageLightbox() {
   lightboxState.returnFocus = null;
   returnFocus?.focus?.();
 }
-function setAuthenticated(authenticated) {
+function activeAuthKey() {
+  return state.authKeys.find((item) => item.id === state.activeCredentialId) || null;
+}
+function setAuthenticated(authenticated, active = null) {
   state.authenticated = authenticated;
+  state.activeCredentialId = active?.id || (authenticated ? state.activeCredentialId : null);
   els.authButton.classList.toggle("authenticated", authenticated);
-  els.authButton.setAttribute("aria-label", authenticated ? "退出登录" : "登录");
+  const current = active || activeAuthKey();
+  els.authButton.setAttribute("aria-label", authenticated ? "打开 Key 管理" : "登录或管理 Key");
   els.authButton.innerHTML = authenticated
-    ? '<i data-lucide="log-out" aria-hidden="true"></i><span>退出</span>'
+    ? `<i data-lucide="key-round" aria-hidden="true"></i><span>${escapeHtml(current?.title || "当前 Key")}</span>`
     : '<i data-lucide="log-in" aria-hidden="true"></i><span>登录</span>';
   els.connection.innerHTML = authenticated
-    ? '<span class="dot ok"></span>API 已登录'
+    ? `<span class="dot ok"></span>${escapeHtml(current?.title || "API 已登录")}`
     : '<span class="dot bad"></span>等待登录';
   refreshIcons();
 }
-function openAuthModal() {
+function renderAuthKeyList() {
+  if (!els.authKeyList) return;
+  els.authKeyList.replaceChildren();
+  const active = activeAuthKey();
+  els.authManagerStatus.textContent = active ? `${active.title} · ${active.maskedKey}` : "未选择 Key";
+  els.authManagerCount.textContent = `${state.authKeys.length} KEYS`;
+  els.authLogoutCurrent.hidden = !active;
+  els.authLogoutAll.hidden = state.authKeys.length === 0;
+  if (!state.authKeys.length) {
+    const empty = document.createElement("div");
+    empty.className = "auth-key-empty";
+    empty.innerHTML = '<i data-lucide="key-round" aria-hidden="true"></i><strong>还没有保存的 Key</strong><span>添加一个 API Key，之后可以在这里快速切换。</span>';
+    els.authKeyList.append(empty);
+    refreshIcons();
+    return;
+  }
+  state.authKeys.forEach((item, index) => {
+    const row = document.createElement("article");
+    row.className = `auth-key-row${item.id === state.activeCredentialId ? " active" : ""}`;
+    row.style.setProperty("--key-delay", `${index * 45}ms`);
+    const main = document.createElement("button");
+    main.type = "button";
+    main.className = "auth-key-main";
+    main.disabled = item.id === state.activeCredentialId;
+    main.setAttribute("aria-label", item.id === state.activeCredentialId ? `${item.title}，当前使用中` : `切换到 ${item.title}`);
+    main.innerHTML = `<span class="auth-key-status" aria-hidden="true"></span><span class="auth-key-copy"><strong></strong><small></small></span><span class="auth-key-route"></span>`;
+    main.querySelector("strong").textContent = item.title;
+    main.querySelector("small").textContent = `${item.maskedKey} · ${item.baseURL}`;
+    main.querySelector(".auth-key-route").textContent = item.id === state.activeCredentialId ? "ACTIVE" : "SWITCH";
+    main.addEventListener("click", () => activateAuthKey(item.id));
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "auth-key-remove";
+    remove.title = `删除 ${item.title}`;
+    remove.setAttribute("aria-label", `删除 ${item.title}`);
+    remove.innerHTML = '<i data-lucide="trash-2" aria-hidden="true"></i>';
+    remove.addEventListener("click", (event) => {
+      event.stopPropagation();
+      askConfirm("删除这个 Key？", `删除「${item.title}」后，仍在生成的图片不会被中断，但之后需要重新添加才能使用。`, () => removeAuthKey(item.id));
+    });
+    row.append(main, remove);
+    els.authKeyList.append(row);
+  });
+  refreshIcons();
+}
+async function loadAuthKeys() {
+  try {
+    // Workers/Python 双栈共用：Key 保险库在浏览器 IndexedDB，不再请求服务端。
+    const items = await listCredentials();
+    state.authKeys = items;
+    state.activeCredentialId = getActiveKeyId();
+    setAuthenticated(Boolean(state.activeCredentialId), activeAuthKey());
+    renderAuthKeyList();
+  } catch (error) {
+    state.authKeys = [];
+    state.activeCredentialId = null;
+    renderAuthKeyList();
+    throw error;
+  }
+}
+function showAuthManager() {
+  els.authManager.classList.remove("hidden");
+  els.authForm.classList.add("hidden");
+  els.authTitle.textContent = "Key 管理";
+  els.authSubtitle.textContent = "切换全局激活 Key；已经开始的生成任务不会被打断。";
+  renderAuthKeyList();
+}
+function showAuthForm() {
+  els.authManager.classList.add("hidden");
+  els.authForm.classList.remove("hidden");
+  els.authTitle.textContent = "添加 Key";
+  els.authSubtitle.textContent = "保存后会立即切换为当前激活 Key。";
+  els.authKeyTitle.value = "";
+  els.authApiKey.value = "";
+  els.authApiKey.focus();
+}
+async function activateAuthKey(id) {
+  try {
+    await activateCredential(id);
+    state.activeCredentialId = id;
+    await loadAuthKeys();
+    await checkHealth();
+    showToast(`已切换到「${activeAuthKey()?.title || "当前 Key"}」`);
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+async function removeAuthKey(id) {
+  try {
+    await deleteCredential(id);
+    await loadAuthKeys();
+    await checkHealth();
+    showToast("Key 已从本机移除");
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+async function logoutCurrentKey() {
+  try {
+    setActiveKeyId(null);
+    state.activeCredentialId = null;
+    setAuthenticated(false);
+    await loadAuthKeys();
+    await checkHealth();
+    showToast("已退出当前 Key，保存的 Key 仍可切换");
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+async function logoutAllKeys() {
+  try {
+    await deleteAllCredentials();
+    state.authKeys = [];
+    state.activeCredentialId = null;
+    setAuthenticated(false);
+    renderAuthKeyList();
+    await checkHealth();
+    showToast("已清除全部 Key，历史对话仍保留在本机");
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+async function openAuthModal() {
   if (els.authModal.classList.contains("hidden"))
     authReturnFocus = document.activeElement;
   els.authModal.classList.remove("hidden");
   document.body.classList.add("auth-modal-open");
-  requestAnimationFrame(() => els.authApiKey.focus());
+  showAuthManager();
+  try {
+    await loadAuthKeys();
+  } catch (error) {
+    showToast(error.message, "error");
+  }
 }
 function closeAuthModal() {
   els.authModal.classList.add("hidden");
   document.body.classList.remove("auth-modal-open");
   els.authApiKey.value = "";
+  els.authKeyTitle.value = "";
   els.authApiKey.type = "password";
   els.authKeyToggle.setAttribute("aria-pressed", "false");
   els.authKeyToggle.setAttribute("aria-label", "显示 API Key");
   els.authKeyToggle.title = "显示 API Key";
   els.authKeyToggle.innerHTML = '<i data-lucide="eye" aria-hidden="true"></i>';
+  showAuthManager();
   refreshIcons();
   authReturnFocus?.focus?.();
   authReturnFocus = null;
 }
 async function refreshAuthSession() {
   try {
-    const response = await fetch("/api/auth/session");
-    const data = await response.json();
-    setAuthenticated(Boolean(data.authenticated));
-    return Boolean(data.authenticated);
+    // 纯本地判断：有激活 Key 即视为已登录（无网络请求）。
+    const activeId = getActiveKeyId();
+    const items = await listCredentials();
+    state.authKeys = items;
+    state.activeCredentialId = items.some((item) => item.id === activeId) ? activeId : null;
+    if (!state.activeCredentialId) setActiveKeyId(null);
+    const active = activeAuthKey();
+    setAuthenticated(Boolean(state.activeCredentialId), active);
+    renderAuthKeyList();
+    return Boolean(state.activeCredentialId);
   } catch {
     setAuthenticated(false);
     els.connection.innerHTML = '<span class="dot bad"></span>服务未连接';
@@ -787,23 +961,9 @@ async function splitGeneratedGrid(message, index, image, button) {
   button.disabled = true;
   button.innerHTML = "<span>…</span>";
   try {
-    const data = new FormData();
-    data.append("image", blob, generatedFileName(message, index));
-    const response = await fetch("/api/split-grid", {
-      method: "POST",
-      body: data,
-    });
-    const result = await response.json();
-    if (!response.ok) {
-      const requestError = new Error(result.error || "宫格图拆分失败");
-      requestError.status = response.status;
-      throw requestError;
-    }
-    const splitImages = (result.images || []).map((item) => ({
-      dataUrl: item.dataUrl,
-      name: item.name || `grid-split-${Date.now()}.jpg`,
-    }));
-    if (!splitImages.length) throw new Error(result.error || "宫格图拆分失败");
+    // Workers 版：直接在浏览器内拆分，不再请求 /api/split-grid。
+    const splitImages = await splitGridImage(blob);
+    if (!splitImages.length) throw new Error("宫格图拆分失败");
     // 保留每次拆分结果，便于用户在同一生成图下回看历史拆分。
     if (!Array.isArray(message.splitHistory)) message.splitHistory = [];
     message.splitHistory.push({
@@ -878,6 +1038,13 @@ function openDb() {
         const assets = db.createObjectStore(ASSET_STORE, { keyPath: "id" });
         assets.createIndex("category", "category");
         assets.createIndex("updatedAt", "updatedAt");
+      }
+      // Key 凭据保险库（public/key-vault.js 使用）。老库升级时补建。
+      if (!db.objectStoreNames.contains(CREDENTIAL_STORE)) {
+        const credentials = db.createObjectStore(CREDENTIAL_STORE, {
+          keyPath: "id",
+        });
+        credentials.createIndex("updatedAt", "updatedAt");
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -2990,11 +3157,19 @@ async function submitGeneration() {
 async function runGenerationTask(conversation, generation, settings, effectiveMode) {
   const taskId = generation.id;
   try {
+    // 从本机保险库取激活的 Key，随请求头发给服务端（服务端纯转发、不落盘）。
+    const credential = await getActiveCredential();
+    if (!credential) {
+      const authError = new Error("未登录或会话已失效，请重新登录。");
+      authError.status = 401;
+      throw authError;
+    }
+    const authHeaders = { Authorization: `Bearer ${credential.apiKey}`, "X-Upstream-Base-URL": credential.baseURL };
     let response;
     if (effectiveMode === "generate") {
       response = await fetch("/api/generate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders },
         body: JSON.stringify({
           prompt: settings.prompt,
           size: settings.size,
@@ -3031,7 +3206,11 @@ async function runGenerationTask(conversation, generation, settings, effectiveMo
           String(settings.references.filter((source) => source.maskDataUrl).length),
         );
       }
-      response = await fetch("/api/edit", { method: "POST", body: data });
+      response = await fetch("/api/edit", {
+        method: "POST",
+        headers: authHeaders, // 不设 Content-Type，交给浏览器补 multipart boundary
+        body: data,
+      });
     }
     const result = await response.json();
     if (!response.ok) {
@@ -3634,40 +3813,40 @@ els.applyMaskEditor.addEventListener("click", () => closeMaskEditor());
 els.maskModal.addEventListener("click", (event) => {
   if (event.target.matches("[data-mask-close]")) closeMaskEditor();
 });
-els.authButton.addEventListener("click", async () => {
-  if (!state.authenticated) return openAuthModal();
-  try {
-    await fetch("/api/auth/logout", { method: "POST" });
-  } finally {
-    setAuthenticated(false);
-    showToast("已退出登录，历史对话仍保留在本机");
-  }
+els.authButton.addEventListener("click", openAuthModal);
+els.authAddKey?.addEventListener("click", showAuthForm);
+els.authBackToManager?.addEventListener("click", showAuthManager);
+els.authLogoutCurrent?.addEventListener("click", logoutCurrentKey);
+els.authLogoutAll?.addEventListener("click", () => {
+  askConfirm(
+    "清除全部 Key？",
+    "这会删除本机保存的所有 API Key；正在生成的图片不会被中断。",
+    logoutAllKeys,
+    true,
+  );
 });
 els.authForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   els.authSubmit.disabled = true;
-  els.authSubmit.querySelector("span").textContent = "正在登录…";
+  els.authSubmit.querySelector("span").textContent = "正在保存…";
   try {
-    const response = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        apiKey: els.authApiKey.value,
-        baseURL: els.authBaseURL.value,
-      }),
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || "登录失败");
-    setAuthenticated(true);
+    // Key 保存到本机 IndexedDB 并立即激活（不再请求服务端）。
+    const credential = await addCredential(
+      els.authApiKey.value,
+      els.authBaseURL.value,
+      els.authKeyTitle.value,
+    );
+    state.activeCredentialId = credential.id;
+    await loadAuthKeys();
     closeAuthModal();
     await checkHealth();
-    showToast("登录成功，30 天内无需重复登录");
+    showToast(`已切换到「${credential.title}」`);
   } catch (error) {
     showToast(error.message, "error");
     els.authApiKey.focus();
   } finally {
     els.authSubmit.disabled = false;
-    els.authSubmit.querySelector("span").textContent = "进入工作台";
+    els.authSubmit.querySelector("span").textContent = "保存并切换";
   }
 });
 els.authKeyToggle.addEventListener("click", () => {

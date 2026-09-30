@@ -1,0 +1,14 @@
+name = "ai-asset-forge"
+main = "src/worker.js"
+compatibility_date = "2026-09-01"
+
+# 静态资源：直接托管 public/ 目录（前端与 API 同源）
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+# 零状态部署：没有 KV、没有 secret、没有任何配置步骤。
+# API Key 存在浏览器 IndexedDB（public/key-vault.js），Worker 纯转发。
+#
+# 部署只需一条命令：
+#   npx wrangler deploy

@@ -316,7 +316,40 @@
               <i data-lucide="x" aria-hidden="true"></i>
             </button>
           </header>
-          <form class="auth-form" id="authForm">
+          <div class="auth-manager" id="authManager">
+            <div class="auth-manager-signal">
+              <span class="auth-manager-signal-dot" aria-hidden="true"></span>
+              <div>
+                <span class="auth-manager-kicker">ACTIVE API ROUTE</span>
+                <strong id="authManagerStatus">未选择 Key</strong>
+              </div>
+              <span class="auth-manager-count" id="authManagerCount">0 KEYS</span>
+            </div>
+            <div class="auth-key-list" id="authKeyList" role="list" aria-label="已保存的 API Key"></div>
+            <div class="auth-manager-actions">
+              <button type="button" class="primary-button auth-add-key" id="authAddKey">
+                <i data-lucide="plus" aria-hidden="true"></i><span>添加 Key</span>
+              </button>
+              <button type="button" class="auth-manager-button" id="authLogoutCurrent" hidden>
+                <i data-lucide="log-out" aria-hidden="true"></i><span>退出当前 Key</span>
+              </button>
+              <button type="button" class="auth-manager-button auth-danger-button" id="authLogoutAll" hidden>
+                <i data-lucide="trash-2" aria-hidden="true"></i><span>清除全部 Key</span>
+              </button>
+            </div>
+            <p class="auth-vault-note"><i data-lucide="shield-check" aria-hidden="true"></i><span>Key 只在本机服务端加密保存，界面仅显示脱敏信息。</span></p>
+          </div>
+          <form class="auth-form hidden" id="authForm">
+            <button type="button" class="auth-back-button" id="authBackToManager">
+              <i data-lucide="arrow-left" aria-hidden="true"></i><span>返回 Key 列表</span>
+            </button>
+            <label for="authKeyTitle">
+              <span>KEY 名称</span>
+            </label>
+            <div class="auth-input-shell">
+              <i data-lucide="bookmark" aria-hidden="true"></i>
+              <input id="authKeyTitle" name="title" type="text" maxlength="40" autocomplete="off" placeholder="例如：生产账号" />
+            </div>
             <label for="authApiKey">
               <span>INX_TOKEN_API_KEY</span>
             </label>
@@ -335,7 +368,7 @@
               <input id="authBaseURL" name="baseURL" type="url" required value="https://xfastapi.ai/v1" placeholder="https://.../v1" />
             </div>
             <p class="auth-security-note"><i data-lucide="shield-check" aria-hidden="true"></i><span>凭据经加密后用于当前服务端会话，历史对话仍保存在本机。</span></p>
-            <button type="submit" class="primary-button auth-submit" id="authSubmit"><span>进入工作台</span><i data-lucide="arrow-up-right" aria-hidden="true"></i></button>
+            <button type="submit" class="primary-button auth-submit" id="authSubmit"><span>保存并切换</span><i data-lucide="arrow-up-right" aria-hidden="true"></i></button>
             <div class="auth-session-meta" aria-label="会话安全信息"><span>30 DAYS</span><i></i><span>HTTPONLY</span><i></i><span>ENCRYPTED</span></div>
           </form>
         </div>
@@ -711,8 +744,8 @@
         <i data-lucide="folder-plus" aria-hidden="true"></i><span>新建项目</span>
       </button>
     </div>
-    <script src="/vendor/lucide/lucide.min.js"></script>
-    <script type="module" src="/app.js"></script>
+    <script src="./vendor/lucide/lucide.min.js"></script>
+    <script type="module" src="./app.js"></script>
 
   </body>
 </html>

@@ -1,31 +1,27 @@
-"""统一 HTTP 路由入口。"""
+"""统一 HTTP 路由入口（零状态版）。"""
 
 from fastapi import APIRouter, Request
 
-from auth.router import router as auth_router
-from auth.session import get_session
 from config_default import AVAILABLE_MODELS, MODEL
 from image.router import router as image_router
 
 
 router = APIRouter()
-router.include_router(auth_router, prefix="/api/auth", tags=["登录会话"])
 router.include_router(image_router, prefix="/api", tags=["图片生成"])
 
 
 @router.get("/api/health", tags=["服务状态"])
-async def health(request: Request):
-    """检查服务以及当前浏览器会话状态。"""
-    session = get_session(request)
+async def health():
+    """服务存活检查；Key 由浏览器管理，服务端恒为「已就绪」。"""
     return {
         "ok": True,
-        "configured": bool(session),
+        "configured": True,
         "model": MODEL,
-        "baseURL": session["baseURL"] if session else None,
+        "baseURL": None,
     }
 
 
 @router.get("/api/models", tags=["服务状态"])
 async def models():
-    """返回配置文件中可用的模型列表，供前端模型切换器使用。"""
+    """返回可用的模型列表，供前端模型切换器使用。"""
     return {"default": MODEL, "available": AVAILABLE_MODELS}

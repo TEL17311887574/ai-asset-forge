@@ -1,8 +1,8 @@
-"""Ai Asset Forge 服务入口。
+"""Ai Asset Forge 服务入口（零状态版）。
 
-配置统一由 ``config_default`` 模块提供（根目录 ``config_default.py``）。
-本模块只负责组装 FastAPI 应用，业务模块也应直接从 ``config_default`` 导入配置，
-因此不存在循环依赖。
+服务端不做任何持久化：API Key 保存在浏览器 IndexedDB（public/key-vault.js），
+生成请求通过 ``Authorization`` 头把 Key 带给本服务，这里只做校验与转发。
+因此没有 .auth-secret / .auth-vault.db / 会话 Cookie，任何机器拿到代码即可运行。
 """
 
 import uvicorn
@@ -13,7 +13,6 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
-from auth.session import close_openai_clients
 from config_default import CORS_ORIGINS
 from image.service import get_error_message
 from router import router
@@ -23,8 +22,8 @@ def create_app() -> FastAPI:
     """创建并配置 FastAPI 应用。"""
     app = FastAPI(
         title="Ai Asset Forge",
-        description="本地运行的 AI 图像资产生成工作台",
-        version="1.0.0",
+        description="本地运行的 AI 图像资产生成工作台（零状态：Key 存浏览器）",
+        version="2.0.0",
         docs_url="/docs",
         swagger_ui_parameters={
             "displayRequestDuration": True,  # 显示请求耗时
@@ -67,14 +66,7 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(Exception)
     async def handle_server_error(_request: Request, exc: Exception):
-        """兜底处理器：捕获一切服务器内部异常（含 OpenAI SDK 异常）。
-
-        FastAPI 的异常分发会优先匹配更具体的类型：
-        - HTTPException          -> 业务错误，返回原始状态码与 detail
-        - RequestValidationError -> 参数校验错误，返回 422
-        其余任何异常（OpenAIError、RuntimeError、TypeError、网络错误等）
-        都会落到这里，记录完整堆栈后统一返回 JSON，避免出现 ASGI 崩溃。
-        """
+        """兜底处理器：捕获一切服务器内部异常（含 OpenAI SDK 异常）。"""
         status_code = getattr(exc, "status_code", None)
         if not isinstance(status_code, int) or not (400 <= status_code <= 599):
             status_code = 500
@@ -100,12 +92,6 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
-
-
-@app.on_event("shutdown")
-async def _shutdown() -> None:
-    """服务关闭时释放 OpenAI 客户端连接池。"""
-    await close_openai_clients()
 
 
 if __name__ == "__main__":

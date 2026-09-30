@@ -18,6 +18,7 @@ from config_default import (
     MAX_SOURCE_FILES,
     MODEL,
     PROMPTS_DIR,
+    REQUEST_TIMEOUT,
 )
 
 
@@ -187,7 +188,8 @@ async def read_image_files(files: List[UploadFile]) -> List[bytes]:
 
 
 async def generate_image(
-    client: AsyncOpenAI,
+    api_key: str,
+    base_url: str,
     prompt: str,
     size: str,
     quality: str,
@@ -210,12 +212,16 @@ async def generate_image(
         }
         # 调用三方接口前把实际参数打印到终端，便于本地排查生成请求。
         logger.info("[OpenAI images.generate] params={}", params)
-        response = await client.images.generate(**params)
+        async with AsyncOpenAI(
+            api_key=api_key, base_url=base_url, timeout=REQUEST_TIMEOUT, max_retries=2
+        ) as client:
+            response = await client.images.generate(**params)
         return _image_response(response)
 
 
 async def edit_image(
-    client: AsyncOpenAI,
+    api_key: str,
+    base_url: str,
     prompt: str,
     images: List[bytes],
     size: str,
@@ -260,7 +266,10 @@ async def edit_image(
     logger.info("[OpenAI images.edit] params={}", log_payload)
 
     async with _get_generation_semaphore():
-        response = await client.images.edit(**payload)
+        async with AsyncOpenAI(
+            api_key=api_key, base_url=base_url, timeout=REQUEST_TIMEOUT, max_retries=2
+        ) as client:
+            response = await client.images.edit(**payload)
         return _image_response(response)
 
 
