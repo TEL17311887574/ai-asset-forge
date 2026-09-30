@@ -147,22 +147,14 @@ function tileBounds(length, lineRanges) {
   return bounds;
 }
 
-/** 把 canvas 转成 data URL（用于前端直接展示）。 */
-function canvasToDataUrl(canvas) {
-  return canvas.toDataURL("image/jpeg", JPEG_QUALITY);
-}
-
 /**
- * 创建一个尺寸为 width×height 的 canvas。
- * 优先用 OffscreenCanvas；老旧浏览器（如 Safari 16.4 之前）回退到普通 canvas。
+ * 创建一个尺寸为 width×height 的 DOM canvas。
+ *
+ * 必须用 DOM canvas（而不是 OffscreenCanvas）：导出用 toDataURL()，
+ * 它只存在于主线程 canvas 上；OffscreenCanvas 没有该方法（只有 convertToBlob）。
+ * 拆分在用户点击时同步执行、数据来自本地文件，不存在阻塞主线程的问题。
  */
 function createCanvas(width, height) {
-  if (typeof OffscreenCanvas === "function") {
-    const canvas = new OffscreenCanvas(1, 1);
-    canvas.width = width;
-    canvas.height = height;
-    return canvas;
-  }
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
@@ -264,7 +256,7 @@ export async function splitGridImage(blob) {
         .drawImage(source, left, top, tileWidth, tileHeight, 0, 0, tileWidth, tileHeight);
 
       results.push({
-        dataUrl: canvasToDataUrl(tile),
+        dataUrl: tile.toDataURL("image/jpeg", JPEG_QUALITY),
         name: `grid-split-${rowIndex + 1}-${columnIndex + 1}.jpg`,
       });
     }
