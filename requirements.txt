@@ -5,3 +5,4 @@ openai>=1.50
 pillow>=10.0
 python-multipart>=0.0.20
 cryptography>=42.0
+tomli>=2.0 ; python_version < "3.11"

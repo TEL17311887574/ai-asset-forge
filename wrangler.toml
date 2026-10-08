@@ -2,6 +2,14 @@ name = "ai-asset-forge"
 main = "src/worker.js"
 compatibility_date = "2026-09-01"
 
+# 构建时把共享配置与模板同步进 public/（ASSETS 只托管这一个目录）：
+# - config_default.toml 与 prompts/ 是 Python 版和 Workers 版共用的事实源，
+#   仓库里住在根目录/prompts，部署时复制进来供运行时读取。
+# sync-assets.js 为 Node 脚本，Windows / 构建机通用（不能用 cp 等 Unix 命令）。
+# ⚠️ 这里绝不能出现 wrangler deploy/dev——构建命令在部署流程内执行，会无限递归。
+[build]
+command = "node scripts/sync-assets.js"
+
 # 静态资源：直接托管 public/ 目录（前端与 API 同源）
 [assets]
 directory = "./public"

@@ -1,0 +1,32 @@
+# ============================================================
+# Ai Asset Forge 全局配置
+# Python 版与 Cloudflare Workers 版共用本文件；修改后 push 自动部署
+# ============================================================
+
+[server]
+# 允许跨源访问的来源；空数组 = 仅同源可访问（Workers 版忽略此项：同源架构无 CORS）
+cors_origins = []
+
+[model]
+# 默认模型
+default = "gpt-image-2"
+# 前端模型切换器可选列表
+available = ["gpt-image-2", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare"]
+
+[generation]
+# 同一时刻允许进行的生成任务数（超出的排队等待，避免被上游限流）
+max_concurrent = 5
+
+[limits]
+# 提示词最大字符数
+max_prompt_length = 4000
+# 最多上传参考图数量
+max_source_files = 16
+# 单文件大小上限（字节）
+max_file_bytes = 20971520
+# 单次调用上游的超时（秒）
+request_timeout_seconds = 180
+
+[paths]
+# 预设提示词模板目录；${REPO_ROOT} = 本文件所在目录（仓库根）
+prompts = "${REPO_ROOT}/prompts"

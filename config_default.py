@@ -1,39 +1,22 @@
-"""项目配置：全部可调参数集中在这里。
+"""配置加载器：把 config_default.toml 装载为模块级常量（下游 import 不变）。
 
-本项目不读取任何外部配置文件（config.toml / .env）：
-需要调整超时、模型或上传限制时，直接修改本文件中的常量，
-然后重启服务即可生效。
-
-API Key 不放这里：Key 由用户保存在浏览器 IndexedDB（public/key-vault.js），
-生成请求通过 Authorization 头发送，服务端纯转发、零存储。
+手改配置请编辑 config_default.toml（唯一事实源，带注释）；
+本文件只是把 TOML 键翻译成原有常量名，不含任何默认值或业务逻辑。
 """
 
+import tomli
 from pathlib import Path
-from typing import List
 
+_REPO_ROOT = Path(__file__).parent
+with open(_REPO_ROOT / "config_default.toml", "rb") as _f:
+    _cfg = tomli.load(_f)
 
-# ---------------------------------------------------------------- 服务
-# 说明：host / port / reload 等服务启动参数写死在 main.py，避免第二处事实来源。
-REQUEST_TIMEOUT: float = 180.0  # 单次调用 OpenAI 的超时时间（秒）
-CORS_ORIGINS: List[str] = []  # 允许跨源访问的来源；留空表示仅同源可访问
-
-# ---------------------------------------------------------------- 模型
-MODEL: str = "gpt-image-2"  # 默认模型
-AVAILABLE_MODELS: List[str] = [  # 前端模型切换器可选列表
-    "gpt-image-2",
-    "gpt-image-2.5-sunburst",
-    "gpt-image-2.5-flare",
-]
-
-# ---------------------------------------------------------------- 并发
-# 同一时刻允许进行的 OpenAI 生成任务数。图片生成耗时长且容易被上游限流，
-# 用信号量把并发限制在可控范围，超出的请求排队等待而不是直接失败。
-MAX_CONCURRENT_GENERATIONS: int = 5
-
-# ---------------------------------------------------------------- 限制
-MAX_PROMPT_LENGTH: int = 4000  # 提示词最大字符数
-MAX_SOURCE_FILES: int = 16  # 最多上传参考图数量
-MAX_FILE_BYTES: int = 20 * 1024 * 1024  # 单文件大小上限（20 MB）
-
-# ---------------------------------------------------------------- 资源
-PROMPTS_DIR: Path = Path(__file__).parent / "prompts"  # 预设提示词模板目录
+MODEL = _cfg["model"]["default"]
+AVAILABLE_MODELS = _cfg["model"]["available"]
+MAX_CONCURRENT_GENERATIONS = _cfg["generation"]["max_concurrent"]
+MAX_PROMPT_LENGTH = _cfg["limits"]["max_prompt_length"]
+MAX_SOURCE_FILES = _cfg["limits"]["max_source_files"]
+MAX_FILE_BYTES = _cfg["limits"]["max_file_bytes"]
+REQUEST_TIMEOUT = float(_cfg["limits"]["request_timeout_seconds"])
+CORS_ORIGINS = _cfg["server"]["cors_origins"]
+PROMPTS_DIR = Path(_cfg["paths"]["prompts"].replace("${REPO_ROOT}", str(_REPO_ROOT)))

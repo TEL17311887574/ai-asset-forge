@@ -1,0 +1,12 @@
+{
+  "name": "ai-asset-forge",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/sync-assets.js && wrangler dev",
+    "deploy": "node scripts/sync-assets.js && wrangler deploy"
+  },
+  "dependencies": {
+    "@iarna/toml": "^2.2.5"
+  }
+}

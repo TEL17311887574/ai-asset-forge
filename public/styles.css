@@ -660,8 +660,12 @@ button {
 .message {
   animation: message-in 0.28s ease both;
 }
+/* 用户消息：右侧完整气泡（曾整体隐藏，现恢复显示） */
 .message-user {
-  display: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  margin-bottom: 18px;
 }
 .message-user .message-bubble {
   background: #282c28;
@@ -929,7 +933,7 @@ button {
 }
 
 .message-user {
-  display: none;
+  /* 曾 display:none：用户消息改以完整气泡展示 */
 }
 
 .message-reply {
@@ -3470,7 +3474,7 @@ body.cursor-active .cursor-ring {
 
 /* Keep history entries visually close to the reference feed on every breakpoint. */
 .messages .message-user {
-  display: none;
+  /* 曾 display:none：用户消息改以完整气泡展示 */
 }
 
 .messages .message-reply {
@@ -3858,6 +3862,14 @@ input[type="url"] {
 .message-user .message-bubble,
 .generation-prompt {
   font-size: 14px;
+}
+
+/* 拖拽图片到输入区时的视觉反馈 */
+.composer-wrap.drag-over {
+  outline: 2px dashed #7ea77b;
+  outline-offset: -6px;
+  border-radius: 18px;
+  background: rgba(126, 167, 123, 0.06);
 }
 
 .message-meta,

@@ -1533,6 +1533,14 @@ function renderAssetStage() {
 function renderAssetCard(asset) {
   const card = document.createElement("article"); card.className = "asset-card";
   const image = document.createElement("img"); image.className = "asset-card-image"; image.src = asset.dataUrl || ""; image.alt = asset.title || "资产";
+  // 点击资产图片打开灯箱，可在同分类资产间翻看（与对话内图片一致的交互）。
+  bindImagePreview(
+    image,
+    () => state.assets
+      .filter((item) => item.category === asset.category)
+      .map((item) => ({ src: item.dataUrl, alt: item.title || "资产", caption: item.title || "资产" })),
+    () => state.assets.filter((item) => item.category === asset.category).findIndex((item) => item.id === asset.id),
+  );
   const meta = document.createElement("div"); meta.className = "asset-card-meta";
   const title = document.createElement("h4"); title.textContent = asset.title || "未命名资产";
   const source = document.createElement("small"); source.textContent = asset.source?.type === "generation" ? "对话生成 · 独立副本" : "本地上传";
@@ -1556,7 +1564,8 @@ function openAssetModal(options = {}) {
 function closeAssetModal() { els.assetModal.classList.add("hidden"); state.assetModalImage = null; state.assetModalSource = null; }
 async function handleAssetFile(file) { if (!file?.type?.startsWith("image/")) return showToast("请选择图片文件", "error"); const dataUrl = await new Promise((resolve) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.readAsDataURL(file); }); state.assetModalImage = { dataUrl, name: file.name }; els.assetFilePreview.src = dataUrl; els.assetFileName.textContent = file.name; els.assetFileSelected.classList.remove("hidden"); els.assetFilePicker.classList.add("hidden"); if (!els.assetNameInput.value) els.assetNameInput.value = file.name.replace(/\.[^.]+$/, ""); }
 async function saveAssetFromModal() { if (!state.assetModalImage?.dataUrl) return showToast("请先选择图片", "error"); const title = uniqueAssetTitle(els.assetNameInput.value); const category = els.assetCategoryInput.value; const now = Date.now(); const asset = { id: uid("asset"), title, name: title, category, dataUrl: state.assetModalImage.dataUrl, source: state.assetModalSource || { type: "upload" }, createdAt: now, updatedAt: now }; await putAsset(asset); state.assets = sortAssets([...state.assets, asset]); closeAssetModal(); renderAssetStage(); updateAssetTotal(); showToast(`已添加资产「${title}」`); }
-function renderAssetPicker() { const list = state.assets.filter((asset) => state.assetPickerFilter === "all" || asset.category === state.assetPickerFilter); els.assetPickerGrid.replaceChildren(); if (!list.length) { els.assetPickerGrid.innerHTML = '<p class="asset-picker-empty">还没有资产，先去资产页上传一项。</p>'; return; } list.forEach((asset) => { const button = document.createElement("button"); button.type = "button"; button.className = "asset-picker-item"; button.innerHTML = `<img src="${asset.dataUrl}" alt=""><span>${escapeHtml(asset.title)}</span>`; button.addEventListener("click", () => { insertAssetMention(asset); closeAssetPicker(); }); els.assetPickerGrid.append(button); }); refreshIcons(); }
+function renderAssetPicker() { const list = state.assets.filter((asset) => state.assetPickerFilter === "all" || asset.category === state.assetPickerFilter); els.assetPickerGrid.replaceChildren(); if (!list.length) { els.assetPickerGrid.innerHTML = '<p class="asset-picker-empty">还没有资产，先去资产页上传一项。</p>'; return; } list.forEach((asset) => { const button = document.createElement("button"); button.type = "button"; button.className = "asset-picker-item"; button.innerHTML = `<img src="${asset.dataUrl}" alt=""><span>${escapeHtml(asset.title)}</span>`; // 点击图片区域预览，点击其余部分插入
+    button.querySelector("img").addEventListener("click", (event) => { event.stopPropagation(); bindImagePreview(button.querySelector("img"), () => list.map((item) => ({ src: item.dataUrl, alt: item.title, caption: item.title })), () => list.findIndex((item) => item.id === asset.id)); button.querySelector("img").click(); }); button.addEventListener("click", () => { insertAssetMention(asset); closeAssetPicker(); }); els.assetPickerGrid.append(button); }); refreshIcons(); }
 function openAssetPicker() { state.assetPickerFilter = "all"; els.assetPickerModal.classList.remove("hidden"); renderAssetPicker(); }
 function closeAssetPicker() { els.assetPickerModal.classList.add("hidden"); els.prompt.focus(); }
 
@@ -1598,16 +1607,32 @@ function showToast(message, type = "") {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => els.status.classList.add("hidden"), 2800);
 }
+/** 确认框是「模态之上的模态」：打开时动态置顶到所有可见弹窗之上。 */
+let confirmOriginalZIndex = "";
+function bringConfirmToFront() {
+  confirmOriginalZIndex = els.confirmBackdrop.style.zIndex;
+  const selectors = [".auth-modal", ".asset-modal", ".asset-picker-modal", ".mask-modal", ".image-lightbox"];
+  let highest = 100; // confirm-backdrop 的 CSS 基准值
+  selectors.forEach((selector) => {
+    const element = document.querySelector(selector);
+    if (!element || element.classList.contains("hidden")) return;
+    const value = Number.parseInt(getComputedStyle(element).zIndex, 10);
+    if (Number.isFinite(value)) highest = Math.max(highest, value);
+  });
+  els.confirmBackdrop.style.zIndex = String(highest + 10);
+}
 function askConfirm(title, text, callback, requiresDouble = false) {
   els.confirmTitle.textContent = title;
   els.confirmText.textContent = text;
   confirmCallback = callback;
   confirmNeedsSecondStep = requiresDouble;
   els.confirmAction.textContent = requiresDouble ? "继续" : "确认删除";
+  bringConfirmToFront();
   els.confirmBackdrop.classList.remove("hidden");
 }
 function closeConfirm() {
   els.confirmBackdrop.classList.add("hidden");
+  els.confirmBackdrop.style.zIndex = confirmOriginalZIndex;
   confirmCallback = null;
   confirmNeedsSecondStep = false;
   els.confirmAction.textContent = "确认删除";
@@ -1925,9 +1950,10 @@ function setSourceFiles(files) {
     incomingCount > 1
   ) {
     showToast(`${modeLabels[state.mode]}只能保留 1 张参考图（包含资产），请删除多余引用`, "error");
-    return;
+    return 0;
   }
   const slots = Math.max(0, MAX_SOURCE_FILES - totalReferenceCount());
+  if (!slots) return 0;
   const added = incoming
     .slice(0, slots)
     .map((file) =>
@@ -1942,6 +1968,15 @@ function setSourceFiles(files) {
   if (incoming.length > slots)
     showToast(`最多只能添加 ${MAX_SOURCE_FILES} 张参考图`, "error");
   if (state.mode === "mask") updateMaskFromSource();
+  return added.length;
+}
+
+/**
+ * 处理拖拽/粘贴进来的图片文件，返回实际添加的数量。
+ * 与 setSourceFiles 的差异：粘贴场景数量上限提示由调用方统一 toast。
+ */
+async function addDroppedFiles(files) {
+  return setSourceFiles(files);
 }
 function renderMentionTags() {
   syncPendingMentions();
@@ -2828,7 +2863,29 @@ async function ensureConversation(prompt) {
   return conversation;
 }
 function renderMessage(message) {
-  if (message.role === "user") return;
+  if (message.role === "user") {
+    // 用户消息以右侧气泡完整展示（此前被 display:none 隐藏，仅剩生成卡片上的截断摘要）。
+    const groupKey = dateGroupKey(message.createdAt);
+    if (!els.messages.querySelector(`[data-date-group="${groupKey}"]`)) {
+      const heading = document.createElement("h2");
+      heading.className = "history-date";
+      heading.dataset.dateGroup = groupKey;
+      heading.textContent = dateHeading(message.createdAt);
+      els.messages.append(heading);
+    }
+    const request = document.createElement("article");
+    request.className = "message message-user";
+    request.dataset.messageId = message.id;
+    const meta = document.createElement("div");
+    meta.className = "message-meta";
+    meta.textContent = "YOU";
+    const bubble = document.createElement("div");
+    bubble.className = "message-bubble";
+    bubble.textContent = message.prompt || "";
+    request.append(meta, bubble);
+    els.messages.append(request);
+    return;
+  }
   const groupKey = dateGroupKey(message.createdAt);
   if (!els.messages.querySelector(`[data-date-group="${groupKey}"]`)) {
     const heading = document.createElement("h2");
@@ -3145,6 +3202,7 @@ async function submitGeneration() {
   renderMessage(userMessage);
   renderMessage(generation);
   scrollToBottom();
+  clearComposer();
   const taskId = generation.id;
   state.generationTasks.set(taskId, { conversationId: conversation.id, projectId: conversation.projectId });
   renderConversationList();
@@ -3152,6 +3210,30 @@ async function submitGeneration() {
     // runGenerationTask 内部已把请求错误写入消息；这里只兜底异步异常。
     console.error("生成任务异常", error);
   });
+}
+
+/**
+ * 发送成功后清空输入区：提示词、参考图、资产引用、蒙版选择全部归零。
+ * 与 resetConversationStage 的区别：不动会话/项目状态，只清编辑器。
+ * 释放参考图的 blob 预览 URL，避免内存泄漏。
+ */
+function clearComposer() {
+  state.sourceFiles.forEach((file) => {
+    if (file.preview) URL.revokeObjectURL(file.preview);
+  });
+  state.sourceFiles = [];
+  state.pendingMentions = [];
+  state.pendingAssetMentions = [];
+  state.assetMentionRange = null;
+  state.mentionCursor = -1;
+  state.maskFile = null;
+  setPromptText("");
+  setMode("default");
+  els.prompt.dispatchEvent(new Event("input"));
+  renderAttachments();
+  renderMentionTags();
+  closeMentionPicker();
+  els.prompt.focus();
 }
 
 async function runGenerationTask(conversation, generation, settings, effectiveMode) {
@@ -3274,7 +3356,49 @@ els.sourceInput.addEventListener("change", (event) => {
   setSourceFiles(event.target.files);
   els.sourceInput.value = "";
 });
-els.prompt.addEventListener("paste", (event) => {
+// ---- 从操作系统拖拽图片文件到输入区 ----
+// 仅响应文件拖入（dataTransfer.types 含 Files）；内部排序拖拽（附件卡片、
+// 对话条目）拖的是元素，不带 Files，天然不会误触。
+let composerDragDepth = 0;
+els.composerWrap.addEventListener("dragenter", (event) => {
+  if (![...event.dataTransfer?.types || []].includes("Files")) return;
+  event.preventDefault();
+  composerDragDepth += 1;
+  els.composerWrap.classList.add("drag-over");
+});
+els.composerWrap.addEventListener("dragover", (event) => {
+  if (![...event.dataTransfer?.types || []].includes("Files")) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "copy";
+});
+els.composerWrap.addEventListener("dragleave", () => {
+  composerDragDepth = Math.max(0, composerDragDepth - 1);
+  if (!composerDragDepth) els.composerWrap.classList.remove("drag-over");
+});
+els.composerWrap.addEventListener("drop", async (event) => {
+  if (![...(event.dataTransfer?.types || [])].includes("Files")) return;
+  event.preventDefault();
+  composerDragDepth = 0;
+  els.composerWrap.classList.remove("drag-over");
+  const files = [...(event.dataTransfer?.files || [])].filter((file) =>
+    file.type.startsWith("image/"),
+  );
+  if (!files.length) return showToast("只支持拖入图片文件", "error");
+  const added = await addDroppedFiles(files);
+  showToast(added > 0 ? `已添加 ${added} 张参考图` : "参考图数量已达上限", added > 0 ? "success" : "error");
+});
+
+els.prompt.addEventListener("paste", async (event) => {  // 优先处理剪贴板里的图片（截图后 Ctrl+V 直接进参考图）。
+  const imageFiles = [...(event.clipboardData?.items || [])]
+    .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+    .map((item) => item.getAsFile())
+    .filter(Boolean);
+  if (imageFiles.length) {
+    event.preventDefault();
+    const added = await addDroppedFiles(imageFiles);
+    showToast(added > 0 ? `已粘贴 ${added} 张图片到参考图` : "参考图数量已达上限", added > 0 ? "success" : "error");
+    return;
+  }
   // contenteditable 默认会保留来源应用的 HTML/CSS。某些来源给 span 写了
   // white-space: nowrap，造成文本横向撑开、纵向高度不增长。提示词只需要文本，
   // 因此统一按纯文本插入，保留换行但不继承外部样式。

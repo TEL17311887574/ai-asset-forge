@@ -7,42 +7,47 @@
  *   2. 其余路径 —— 托管 public/ 静态前端（Workers Assets）。
  *
  * 没有 KV、没有 secret、没有会话；部署只需 `npx wrangler deploy`。
+ * 配置与提示词模板来自 config_default.toml 与 prompts/*.txt（两栈共用，
+ * 运行时经 ASSETS 读取并按 isolate 缓存，见 loadConfig）。
  */
 
-const CONFIG = {
-  /** 单次调用上游的超时时间（毫秒）。 */
-  REQUEST_TIMEOUT_MS: 180_000,
-  /** 默认模型。 */
-  MODEL: "gpt-image-2",
-  /** 前端模型切换器可选列表。 */
-  AVAILABLE_MODELS: ["gpt-image-2", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare"],
-  /** 提示词最大字符数。 */
-  MAX_PROMPT_LENGTH: 4000,
-  /** 最多上传参考图数量。 */
-  MAX_SOURCE_FILES: 16,
-};
+import toml from "@iarna/toml";
 
-/** 提示词模板：内容与 prompts/*.txt 一致。 */
-const TEMPLATES = {
-  "character_turnaround.txt": `无论参考图中出现何种背景（白色、户外或任何环境），都将其完全替换，并将最终输出渲染为高级工作室肖像双联图，使用纯白无缝背景。白色背景必须在所有面板中完全一致，绝对没有环境元素、阴影或渐变。
+/** isolate 级缓存：toml 与模板各进程只读一次。 */
+let cachedConfig = null;
 
-生成一张采用非对称两部分布局的单一图像：
-
-- 左面板（约总宽度的 1/3）：同一人物的近景上半身肖像（半身像），取景从头部到中躯干/腰部。人物必须面向镜头，呈严格正面直视视角——眼睛直视镜头，肩膀与画面平面完全平行，面部构图对称，头部无任何旋转或倾斜。姿态自然，展示面部表情、发型和上装细节。
-- 右面板（约总宽度的 2/3）：同一人物的全身三视图正交组，在比例和垂直基线上精确对齐，包含：
-  • 正面视图：从头到脚全身，面向镜头，中性站姿
-  • 侧面视图：标准 90° 纯侧面，全身，自然姿态
-  • 背面视图：后侧全身视图，展示后脑、躯干和腿部，并保持与其他两个视图相同的取景高度和脚部对齐
-
-用一条细竖分隔线分开左、右面板。在右面板内，用另外两条细竖线分隔三个全身视图——所有线条笔直、间距均匀，呈现干净、极简的布局设计。
-
-全程采用统一可控的工作室灯光：柔和但有方向性的主光，自然阴影塑形，真实明暗对比。对于左侧上半身肖像：清晰的眼睛细节、真实皮肤纹理和准确的面料渲染（严禁过度磨皮或喷枪修图）。对于右侧全身视图：三个角度光照逻辑一致，真实布料垂坠感，自然四肢比例，轮廓上的光线衰减准确。所有视图中头发纹理必须保持真实。
-
-人物的身份、面部比例、发型、身体比例、服装和整体造型必须与参考图完全匹配；但是，所有面板的背景必须统一为相同的纯白工作室背景。
-
-严格禁止添加任何文字、水印、标志、字幕、UI 元素、边框、面板标签（A/B/C/1/2/3）、角度标注、测量指南或任何其他形式的附加内容。`,
-  "scene_multiview.txt": `以这张图片为参考，生成一组2×2网格的场景图，每个面板使用明显不同的摄像机角度，添加干净的1pt白色网格线分隔所有画面（内部边缘线，不要双重加粗）。所有面板必须展示相同的环境。任何面板中都不应出现角色或人物。第一行（从左到右）：1. 正面视角：直接面向场景的平视视角。2. 仰视视角：陡峭的仰视视角，相机从水平面向上倾斜60度，从左到右水平排列。3. 特写镜头：聚焦环境关键部分的紧凑详细视角，填充大部分画面。4. 俯视广角镜头：从高处俯瞰场景的高角度视角，视野开阔。确保：每个面板的摄像机位置、高度和方向明显不同。透视变化强烈且明确。所有面板的光照和风格保持一致。不要在图片上写任何文字。`,
-};
+/**
+ * 读取共享配置与提示词模板。
+ * 配置文件与模板都在仓库根/仓库内，构建时同步进 public/ 供 ASSETS 托管。
+ */
+async function loadConfig(env) {
+  if (cachedConfig) return cachedConfig;
+  // ASSETS.fetch 需要完整 URL（相对路径会抛 Invalid URL）。
+  const asset = (path) => env.ASSETS.fetch(new Request(`https://assets.local${path}`));
+  const [tomlResp, turnaround, multiview] = await Promise.all([
+    asset("/config_default.toml"),
+    asset("/prompts/character_turnaround.txt"),
+    asset("/prompts/scene_multiview.txt"),
+  ]);
+  if (!tomlResp.ok || !turnaround.ok || !multiview.ok) {
+    throw new HttpError(500, "配置或提示词模板缺失，请检查部署产物。");
+  }
+  const parsed = toml.parse(await tomlResp.text());
+  cachedConfig = {
+    config: {
+      model: parsed.model?.default,
+      availableModels: parsed.model?.available || [],
+      maxPromptLength: parsed.limits?.max_prompt_length ?? 4000,
+      maxSourceFiles: parsed.limits?.max_source_files ?? 16,
+      requestTimeoutMs: (parsed.limits?.request_timeout_seconds ?? 180) * 1000,
+    },
+    templates: {
+      characterTurnaround: (await turnaround.text()).trim(),
+      sceneMultiView: (await multiview.text()).trim(),
+    },
+  };
+  return cachedConfig;
+}
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -76,10 +81,10 @@ function extractCredentials(request) {
 
 // ---------------------------------------------------------------- safe_* 校验（与 Python 版一致）
 
-function cleanPrompt(text) {
+function cleanPrompt(text, cfg) {
   if (typeof text !== "string" || !text.trim()) throw new HttpError(400, "提示词不能为空。");
-  if (text.length > CONFIG.MAX_PROMPT_LENGTH) {
-    throw new HttpError(400, `提示词不能超过 ${CONFIG.MAX_PROMPT_LENGTH} 字符。`);
+  if (text.length > cfg.maxPromptLength) {
+    throw new HttpError(400, `提示词不能超过 ${cfg.maxPromptLength} 字符。`);
   }
   return text.trim();
 }
@@ -124,8 +129,8 @@ function safeInputFidelity(value) {
   return ["low", "high"].includes(value) ? value : "low";
 }
 
-function safeModel(value) {
-  return CONFIG.AVAILABLE_MODELS.includes(value) ? value : CONFIG.MODEL;
+function safeModel(value, cfg) {
+  return cfg.availableModels.includes(value) ? value : cfg.model;
 }
 
 function buildPrompt(userPrompt, templateName) {
@@ -136,7 +141,7 @@ function buildPrompt(userPrompt, templateName) {
 
 // ---------------------------------------------------------------- 上游转发
 
-async function callUpstream(apiKey, baseURL, path, body, isMultipart) {
+async function callUpstream(cfg, apiKey, baseURL, path, body, isMultipart) {
   const headers = { Authorization: `Bearer ${apiKey}` };
   if (!isMultipart) headers["Content-Type"] = "application/json";
 
@@ -146,11 +151,11 @@ async function callUpstream(apiKey, baseURL, path, body, isMultipart) {
       method: "POST",
       headers,
       body: isMultipart ? body : JSON.stringify(body),
-      signal: AbortSignal.timeout(CONFIG.REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(cfg.requestTimeoutMs),
     });
   } catch (error) {
     if (error?.name === "TimeoutError") {
-      throw new HttpError(504, `上游超时（超过 ${CONFIG.REQUEST_TIMEOUT_MS / 1000} 秒）。`);
+      throw new HttpError(504, `上游超时（超过 ${cfg.requestTimeoutMs / 1000} 秒）。`);
     }
     throw new HttpError(502, `无法连接上游接口：${error?.message || "网络错误"}`);
   }
@@ -183,14 +188,14 @@ async function callUpstream(apiKey, baseURL, path, body, isMultipart) {
 
 // ---------------------------------------------------------------- 路由处理
 
-async function handleGenerate(request) {
+async function handleGenerate(request, cfg) {
   const { apiKey, baseURL } = extractCredentials(request);
   const payload = await request.json().catch(() => null);
   if (!payload) throw new HttpError(400, "请求体不是合法 JSON。");
 
-  const { images } = await callUpstream(apiKey, baseURL, "/images/generations", {
-    model: safeModel(payload.model),
-    prompt: cleanPrompt(payload.prompt),
+  const { images } = await callUpstream(cfg, apiKey, baseURL, "/images/generations", {
+    model: safeModel(payload.model, cfg),
+    prompt: cleanPrompt(payload.prompt, cfg),
     size: safeSize(payload.size),
     quality: safeQuality(payload.quality),
     n: safeCount(payload.n),
@@ -199,24 +204,24 @@ async function handleGenerate(request) {
   return { images };
 }
 
-async function handleEdit(request) {
+async function handleEdit(request, cfg) {
   const { apiKey, baseURL } = extractCredentials(request);
   const form = await request.formData();
   const files = form.getAll("image").filter((entry) => typeof entry === "object" && entry.arrayBuffer);
   if (!files.length) throw new HttpError(400, "请至少上传一张原图。");
-  if (files.length > CONFIG.MAX_SOURCE_FILES) {
-    throw new HttpError(400, `最多只能上传 ${CONFIG.MAX_SOURCE_FILES} 张图片。`);
+  if (files.length > cfg.maxSourceFiles) {
+    throw new HttpError(400, `最多只能上传 ${cfg.maxSourceFiles} 张图片。`);
   }
 
   const prompt = form.get("prompt");
   const mode = form.get("mode") || "edit";
   let finalPrompt;
   if (mode === "characterTurnaround") {
-    finalPrompt = buildPrompt(safeOptionalPrompt(prompt), "character_turnaround.txt");
+    finalPrompt = buildPrompt(safeOptionalPrompt(prompt), cfg.templates.characterTurnaround);
   } else if (mode === "sceneMultiView") {
-    finalPrompt = buildPrompt(safeOptionalPrompt(prompt), "scene_multiview.txt");
+    finalPrompt = buildPrompt(safeOptionalPrompt(prompt), cfg.templates.sceneMultiView);
   } else {
-    finalPrompt = cleanPrompt(prompt);
+    finalPrompt = cleanPrompt(prompt, cfg);
   }
 
   // 与 Python 版一致：仅取单个 mask 字段。
@@ -224,7 +229,7 @@ async function handleEdit(request) {
   const maskFile = mask && typeof mask === "object" && mask.arrayBuffer ? mask : null;
 
   const upstreamForm = new FormData();
-  upstreamForm.append("model", safeModel(form.get("model")));
+  upstreamForm.append("model", safeModel(form.get("model"), cfg));
   upstreamForm.append("prompt", finalPrompt);
   upstreamForm.append("size", safeSize(form.get("size") || "1024x1024"));
   upstreamForm.append("quality", safeQuality(form.get("quality")));
@@ -236,7 +241,7 @@ async function handleEdit(request) {
   }
   if (maskFile) upstreamForm.append("mask", maskFile, "mask.png");
 
-  const { images } = await callUpstream(apiKey, baseURL, "/images/edits", upstreamForm, true);
+  const { images } = await callUpstream(cfg, apiKey, baseURL, "/images/edits", upstreamForm, true);
   return { images };
 }
 
@@ -253,18 +258,26 @@ export default {
         return await env.ASSETS.fetch(request);
       }
 
-      if (path === "/api/generate" && method === "POST") return json(await handleGenerate(request));
-      if (path === "/api/edit" && method === "POST") return json(await handleEdit(request));
+      if (path === "/api/generate" && method === "POST") {
+        const cfg = await loadConfig(env);
+        return json(await handleGenerate(request, cfg));
+      }
+      if (path === "/api/edit" && method === "POST") {
+        const cfg = await loadConfig(env);
+        return json(await handleEdit(request, cfg));
+      }
 
       if (path === "/api/split-grid") {
         return json({ error: "宫格拆分已在前端本地完成，无需请求此接口。" }, 410);
       }
 
       if (path === "/api/health" && method === "GET") {
-        return json({ ok: true, configured: true, model: CONFIG.MODEL, baseURL: null });
+        const cfg = await loadConfig(env);
+        return json({ ok: true, configured: true, model: cfg.config.model, baseURL: null });
       }
       if (path === "/api/models" && method === "GET") {
-        return json({ default: CONFIG.MODEL, available: CONFIG.AVAILABLE_MODELS });
+        const cfg = await loadConfig(env);
+        return json({ default: cfg.config.model, available: cfg.config.availableModels });
       }
 
       return json({ error: "接口不存在。" }, 404);
