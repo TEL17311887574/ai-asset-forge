@@ -2,6 +2,17 @@ name = "ai-asset-forge"
 main = "src/worker.js"
 compatibility_date = "2026-09-01"
 
+# Workers 日志：部署后可在 Cloudflare Workers → Observability 中查看
+# 仅保留实时 console.error / console.log 追踪；关闭自动调用日志和持久化存储。
+[observability]
+enabled = true
+head_sampling_rate = 1.0
+
+[observability.logs]
+enabled = true
+invocation_logs = false
+persist = false
+
 # 构建时把共享配置与模板同步进 public/（ASSETS 只托管这一个目录）：
 # - config_default.toml 与 prompts/ 是 Python 版和 Workers 版共用的事实源，
 #   仓库里住在根目录/prompts，部署时复制进来供运行时读取。

@@ -63,10 +63,18 @@ function json(data, status = 200) {
   });
 }
 
-function errorResponse(error) {
-  if (error instanceof HttpError) return json({ error: error.message }, error.status);
-  console.error("未处理异常:", error?.stack || error);
-  return json({ error: "服务器内部错误，请查看日志。" }, 500);
+function errorResponse(error, requestId = "unknown") {
+  if (error instanceof HttpError) {
+    return json({ error: error.message, requestId }, error.status);
+  }
+  // 不把 API Key、请求体或完整上游响应回传给浏览器；只在 Workers 日志记录诊断信息。
+  console.error(JSON.stringify({
+    requestId,
+    name: error?.name || "Error",
+    message: error?.message || String(error),
+    stack: error?.stack || "",
+  }));
+  return json({ error: "服务器内部错误，请查看日志。", requestId }, 500);
 }
 
 /** 从请求头提取凭据（由浏览器保险库提供）。 */
@@ -133,8 +141,7 @@ function safeModel(value, cfg) {
   return cfg.availableModels.includes(value) ? value : cfg.model;
 }
 
-function buildPrompt(userPrompt, templateName) {
-  const template = TEMPLATES[templateName];
+function buildPrompt(userPrompt, template, templateName) {
   if (!template) throw new HttpError(500, `提示词模板缺失: ${templateName}`);
   return [userPrompt.trim(), template].filter(Boolean).join("\n\n");
 }
@@ -193,9 +200,9 @@ async function handleGenerate(request, cfg) {
   const payload = await request.json().catch(() => null);
   if (!payload) throw new HttpError(400, "请求体不是合法 JSON。");
 
-  const { images } = await callUpstream(cfg, apiKey, baseURL, "/images/generations", {
-    model: safeModel(payload.model, cfg),
-    prompt: cleanPrompt(payload.prompt, cfg),
+  const { images } = await callUpstream(cfg.config, apiKey, baseURL, "/images/generations", {
+    model: safeModel(payload.model, cfg.config),
+    prompt: cleanPrompt(payload.prompt, cfg.config),
     size: safeSize(payload.size),
     quality: safeQuality(payload.quality),
     n: safeCount(payload.n),
@@ -209,19 +216,19 @@ async function handleEdit(request, cfg) {
   const form = await request.formData();
   const files = form.getAll("image").filter((entry) => typeof entry === "object" && entry.arrayBuffer);
   if (!files.length) throw new HttpError(400, "请至少上传一张原图。");
-  if (files.length > cfg.maxSourceFiles) {
-    throw new HttpError(400, `最多只能上传 ${cfg.maxSourceFiles} 张图片。`);
+  if (files.length > cfg.config.maxSourceFiles) {
+    throw new HttpError(400, `最多只能上传 ${cfg.config.maxSourceFiles} 张图片。`);
   }
 
   const prompt = form.get("prompt");
   const mode = form.get("mode") || "edit";
   let finalPrompt;
   if (mode === "characterTurnaround") {
-    finalPrompt = buildPrompt(safeOptionalPrompt(prompt), cfg.templates.characterTurnaround);
+    finalPrompt = buildPrompt(safeOptionalPrompt(prompt), cfg.templates.characterTurnaround, "characterTurnaround");
   } else if (mode === "sceneMultiView") {
-    finalPrompt = buildPrompt(safeOptionalPrompt(prompt), cfg.templates.sceneMultiView);
+    finalPrompt = buildPrompt(safeOptionalPrompt(prompt), cfg.templates.sceneMultiView, "sceneMultiView");
   } else {
-    finalPrompt = cleanPrompt(prompt, cfg);
+    finalPrompt = cleanPrompt(prompt, cfg.config);
   }
 
   // 与 Python 版一致：仅取单个 mask 字段。
@@ -229,7 +236,7 @@ async function handleEdit(request, cfg) {
   const maskFile = mask && typeof mask === "object" && mask.arrayBuffer ? mask : null;
 
   const upstreamForm = new FormData();
-  upstreamForm.append("model", safeModel(form.get("model"), cfg));
+  upstreamForm.append("model", safeModel(form.get("model"), cfg.config));
   upstreamForm.append("prompt", finalPrompt);
   upstreamForm.append("size", safeSize(form.get("size") || "1024x1024"));
   upstreamForm.append("quality", safeQuality(form.get("quality")));
@@ -241,7 +248,7 @@ async function handleEdit(request, cfg) {
   }
   if (maskFile) upstreamForm.append("mask", maskFile, "mask.png");
 
-  const { images } = await callUpstream(cfg, apiKey, baseURL, "/images/edits", upstreamForm, true);
+  const { images } = await callUpstream(cfg.config, apiKey, baseURL, "/images/edits", upstreamForm, true);
   return { images };
 }
 
@@ -249,6 +256,7 @@ async function handleEdit(request, cfg) {
 
 export default {
   async fetch(request, env) {
+    const requestId = crypto.randomUUID();
     try {
       const url = new URL(request.url);
       const path = url.pathname;
@@ -282,7 +290,7 @@ export default {
 
       return json({ error: "接口不存在。" }, 404);
     } catch (error) {
-      return errorResponse(error);
+      return errorResponse(error, requestId);
     }
   },
 };

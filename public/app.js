@@ -227,6 +227,8 @@ const els = {
   authButton: $("#authButton"),
   authModal: $("#authModal"),
   authManager: $("#authManager"),
+  authTitle: $("#authTitle"),
+  authSubtitle: $("#authSubtitle"),
   authManagerStatus: $("#authManagerStatus"),
   authManagerCount: $("#authManagerCount"),
   authKeyList: $("#authKeyList"),
