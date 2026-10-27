@@ -30,3 +30,75 @@ request_timeout_seconds = 180
 [paths]
 # 预设提示词模板目录；${REPO_ROOT} = 本文件所在目录（仓库根）
 prompts = "${REPO_ROOT}/prompts"
+
+# ============================================================
+# 预设模式注册表
+# ------------------------------------------------------------
+# 每个预设 = 一段模板 + 参考图数量约束 + 若干可选槽位。
+# 模板里写 {{slot_id}} 占位，用户填了就替换，没填就删掉整行
+# （所以模板中每个槽位必须独占一行，且该行只服务于这个槽位）。
+# 新增预设只需在此处加一节 + 放一个 txt 模板，前端自动出选项。
+# ============================================================
+
+[presets.characterTurnaround]
+label = "角色标准三视图"
+description = "需 1 张参考图（包含资产）生成三视图"
+template = "character_turnaround.txt"
+min_refs = 1
+max_refs = 1
+order = 10
+ratios = ["16:9", "21:9"]
+slots = []
+
+[presets.characterBreakdownImage]
+label = "角色拆分解析图"
+description = "需 1 张角色图，生成带标注的设计参考表"
+template = "character_breakdown_image.txt"
+min_refs = 1
+max_refs = 1
+order = 20
+ratios = ["16:9", "21:9"]
+
+[[presets.characterBreakdownImage.slots]]
+id = "extra"
+label = "补充要求"
+hint = "如：玉镯只戴右手腕"
+
+[presets.characterBreakdownText]
+label = "角色拆分解析图（文字）"
+description = "用文字描述角色，可附加服饰 / 武器等素材图"
+template = "character_breakdown_text.txt"
+min_refs = 0
+max_refs = 6
+order = 30
+ratios = ["16:9", "21:9"]
+
+[[presets.characterBreakdownText.slots]]
+id = "style"
+label = "画风"
+hint = "如：仙侠国漫、3D CG 渲染"
+
+[[presets.characterBreakdownText.slots]]
+id = "portrait"
+label = "头像数量"
+hint = "如：one / two"
+
+[[presets.characterBreakdownText.slots]]
+id = "face"
+label = "面部与发型"
+hint = "如：银白长发、金冠、冰蓝瞳孔"
+
+[[presets.characterBreakdownText.slots]]
+id = "clothing"
+label = "服饰"
+hint = "如：正红凤纹婚服汉服"
+
+[[presets.characterBreakdownText.slots]]
+id = "accessories"
+label = "配饰"
+hint = "如：玉镯只戴右手，左手必须空"
+
+[[presets.characterBreakdownText.slots]]
+id = "details"
+label = "细节放大"
+hint = "如：金线刺绣、玉镯"

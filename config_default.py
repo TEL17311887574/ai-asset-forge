@@ -4,12 +4,18 @@
 本文件只是把 TOML 键翻译成原有常量名，不含任何默认值或业务逻辑。
 """
 
-import tomli
+# ``tomllib`` is included in Python 3.11 and later. Keep ``tomli`` as a
+# fallback so the project still works with the Python 3.9/3.10 versions
+# documented in README.md.
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - only used on Python < 3.11
+    import tomli as tomllib
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).parent
 with open(_REPO_ROOT / "config_default.toml", "rb") as _f:
-    _cfg = tomli.load(_f)
+    _cfg = tomllib.load(_f)
 
 MODEL = _cfg["model"]["default"]
 AVAILABLE_MODELS = _cfg["model"]["available"]
@@ -20,3 +26,6 @@ MAX_FILE_BYTES = _cfg["limits"]["max_file_bytes"]
 REQUEST_TIMEOUT = float(_cfg["limits"]["request_timeout_seconds"])
 CORS_ORIGINS = _cfg["server"]["cors_origins"]
 PROMPTS_DIR = Path(_cfg["paths"]["prompts"].replace("${REPO_ROOT}", str(_REPO_ROOT)))
+
+# 预设模式注册表（原始 TOML 数据；由 image/presets.py 负责解析与拼装）。
+PRESETS = _cfg.get("presets", {})

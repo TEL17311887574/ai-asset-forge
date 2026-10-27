@@ -76,25 +76,198 @@ const RESOLUTION_PRESETS = Object.freeze({
 const modeContent = {
   default: "程序会根据是否上传参考图，自动选择文生图或图生图。",
   mask: "上传原图并擦出蒙版区域，只修改你指定的部分。",
-  characterTurnaround: "需 1 张参考图（包含资产），生成工作室肖像与全身三视图。",
-  sceneMultiView: "需 1 张参考图（包含资产），生成 2×2 场景多视角网格。",
 };
 const modeLabels = {
   default: "默认",
   generate: "文生图",
   edit: "图生图",
   mask: "蒙版编辑",
-  characterTurnaround: "角色三视图",
-  sceneMultiView: "场景多视角",
 };
-// 单参考图模式：角色三视图与场景多视角都只能使用 1 张参考图。
-const SINGLE_REFERENCE_MODES = ["characterTurnaround", "sceneMultiView"];
-// 特殊模式的允许比例；切换模式时若当前比例不可用，自动回退到列表第一项。
-const MODE_ALLOWED_RATIOS = {
-  characterTurnaround: ["16:9", "21:9"],
-  sceneMultiView: ["9:16", "16:9", "21:9"],
+
+/**
+ * 预设模式注册表：由 GET /api/presets 填充（数据源 config_default.toml）。
+ * 每个预设：{ id, label, description, minRefs, maxRefs, ratios, order, slots }。
+ * 新增预设只需改 toml + 放模板，这里无需改动。
+ */
+let PRESET_MODES = [];
+/** 预设 id → 定义，便于 O(1) 查询。 */
+let PRESET_MAP = new Map();
+/** 用户在各预设中填写的槽位值：{ presetId: { slotId: value } }。 */
+const presetSlotValues = {};
+
+function presetById(id) {
+  return PRESET_MAP.get(id) || null;
+}
+function isPresetMode(id) {
+  return PRESET_MAP.has(id);
+}
+/** 当前模式若是预设，返回其定义（否则 null）。 */
+function activePreset() {
+  return presetById(state.mode);
+}
+/** 预设的参考图数量约束（非预设模式返回 null）。 */
+function presetRefRange(id = state.mode) {
+  const preset = presetById(id);
+  return preset ? { min: preset.minRefs, max: preset.maxRefs } : null;
+}
+/** 预设允许的比例（非预设或未限制返回 null）。 */
+function modeAllowedRatios(id = state.mode) {
+  const preset = presetById(id);
+  return preset && preset.ratios && preset.ratios.length ? preset.ratios : null;
+}
+
+/**
+ * 拉取预设注册表并重建模式列表。
+ * 失败时静默保留默认/蒙版两个内置模式，不阻断页面。
+ */
+async function loadPresets() {
+  try {
+    const response = await fetch("/api/presets");
+    if (!response.ok) return;
+    const data = await response.json();
+    const items = Array.isArray(data.items) ? data.items : [];
+    PRESET_MODES = items;
+    PRESET_MAP = new Map(items.map((item) => [item.id, item]));
+    items.forEach((item) => {
+      modeLabels[item.id] = item.label;
+      if (item.description) modeContent[item.id] = item.description;
+    });
+    renderModeOptions();
+    syncPresetSlotForm();
+  } catch (error) {
+    // 预设接口不可用时保留默认模式即可，不打断页面初始化。
+    console.warn("加载预设失败：", error);
+  }
+}
+
+/** 每个预设的图标（未列出的用通用图标兜底）。 */
+const PRESET_ICONS = {
+  characterTurnaround: "user-round-cog",
+  characterBreakdownImage: "user-round-search",
+  characterBreakdownText: "file-pen-line",
 };
-const TURNAROUND_ALLOWED_RATIOS = MODE_ALLOWED_RATIOS.characterTurnaround;
+
+/**
+ * 动态渲染模式列表：保留内置的「默认 / 蒙版」，其后追加服务端下发的预设。
+ * 预设项全部由数据驱动，新增预设无需改这里。
+ */
+function renderModeOptions() {
+  if (!els.modeOptions) return;
+  els.modeOptions.querySelectorAll("[data-preset-mode]").forEach((node) => node.remove());
+  PRESET_MODES.forEach((preset) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `mode-option${preset.id === state.mode ? " active" : ""}`;
+    button.dataset.mode = preset.id;
+    button.dataset.presetMode = "1";
+    const icon = PRESET_ICONS[preset.id] || "shapes";
+    button.innerHTML = `
+      <span class="mode-option-icon" aria-hidden="true"><i data-lucide="${icon}"></i></span>
+      <span class="mode-option-copy">
+        <span class="mode-option-title"></span>
+        <span class="mode-option-desc"></span>
+      </span>
+      <span class="mode-option-state" aria-hidden="true"><i data-lucide="circle"></i></span>`;
+    button.querySelector(".mode-option-title").textContent = preset.label;
+    button.querySelector(".mode-option-desc").textContent = preset.description || "";
+    button.addEventListener("click", () => {
+      applyPresetSelection(preset.id);
+    });
+    els.modeOptions.append(button);
+  });
+  refreshIcons();
+}
+
+/**
+ * 选中一个预设：切模式、必要时裁剪多余的参考图、刷新槽位表单。
+ * 参考图约束由预设的 min/max 决定（取代旧的双模式硬编码）。
+ */
+function applyPresetSelection(presetId) {
+  const preset = presetById(presetId);
+  if (!preset) return;
+  const overLimit = totalReferenceCount() > preset.maxRefs;
+  if (overLimit) {
+    if (preset.maxRefs === 0) {
+      showToast(`${preset.label}不需要参考图，已清空当前参考图`, "error");
+      state.sourceFiles = [];
+      state.pendingAssetMentions = [];
+      els.prompt.querySelectorAll(".inline-mention, .asset-mention").forEach((node) => node.remove());
+      syncPendingMentions();
+    } else {
+      // 只保留前 maxRefs 张（顺序与请求一致：上传图在前，资产在后）。
+      if (state.sourceFiles.length > preset.maxRefs) {
+        state.sourceFiles = state.sourceFiles.slice(0, preset.maxRefs);
+        els.prompt.querySelectorAll(".inline-mention").forEach((mention) => {
+          const index = Number(mention.dataset.index);
+          if (index < preset.maxRefs) updateInlineMention(mention, index);
+          else mention.remove();
+        });
+      }
+      const keepAssets = Math.max(0, preset.maxRefs - state.sourceFiles.length);
+      const assetMentions = [...els.prompt.querySelectorAll(".asset-mention")];
+      assetMentions.slice(keepAssets).forEach((mention) => mention.remove());
+      syncPendingMentions();
+      showToast(`已为${preset.label}保留前 ${preset.maxRefs} 张参考图`);
+    }
+  }
+  setMode(presetId);
+  setModePopoverOpen(false);
+}
+
+/** 槽位值读取（当前预设）。 */
+function currentSlotValues(presetId = state.mode) {
+  return { ...(presetSlotValues[presetId] || {}) };
+}
+
+/**
+ * 同步槽位表单：当前模式有 slots 则渲染输入框，否则隐藏。
+ * 保留用户已填内容（切走再切回不丢）。
+ */
+function syncPresetSlotForm() {
+  if (!els.presetSlots || !els.presetSlotsBody) return;
+  const preset = activePreset();
+  const slots = preset?.slots || [];
+  if (!preset || !slots.length) {
+    els.presetSlots.classList.add("hidden");
+    els.presetSlotsBody.replaceChildren();
+    return;
+  }
+  const values = currentSlotValues(preset.id);
+  els.presetSlotsTitle.textContent = `${preset.label} · 待补充`;
+  els.presetSlotsBody.replaceChildren();
+  slots.forEach((slot) => {
+    const wrap = document.createElement("label");
+    wrap.className = "preset-slot";
+    const caption = document.createElement("span");
+    caption.className = "preset-slot-label";
+    caption.textContent = slot.label || slot.id;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "preset-slot-input";
+    input.dataset.slotId = slot.id;
+    input.placeholder = slot.hint || "";
+    input.value = values[slot.id] || "";
+    input.addEventListener("input", () => {
+      const bucket = presetSlotValues[preset.id] || (presetSlotValues[preset.id] = {});
+      const text = input.value.trim();
+      if (text) bucket[slot.id] = text;
+      else delete bucket[slot.id];
+    });
+    wrap.append(caption, input);
+    els.presetSlotsBody.append(wrap);
+  });
+  els.presetSlots.classList.remove("hidden");
+}
+
+/** 折叠/展开槽位区。 */
+function togglePresetSlots() {
+  const body = els.presetSlotsBody;
+  if (!body) return;
+  const collapsed = body.classList.toggle("collapsed");
+  if (els.presetSlotsToggleLabel) {
+    els.presetSlotsToggleLabel.textContent = collapsed ? "展开" : "收起";
+  }
+}
 const PROMPT_PLACEHOLDERS = {
   default: "描述你想生成的画面… 输入 @ 选择参考图",
   singleReference: "可不输入提示词，直接发送",
@@ -158,6 +331,12 @@ const els = {
   sourceInput: $("#sourceInput"),
   sourceMeta: $("#sourceMeta"),
   composerAttachments: $("#composerAttachments"),
+  presetSlots: $("#presetSlots"),
+  presetSlotsBody: $("#presetSlotsBody"),
+  presetSlotsTitle: $("#presetSlotsTitle"),
+  presetSlotsToggle: $("#presetSlotsToggle"),
+  presetSlotsToggleLabel: $("#presetSlotsToggleLabel"),
+  modeOptions: $("#modeOptions"),
   mentionPicker: $("#mentionPicker"),
   attachButton: $("#attachButton"),
   maskEditor: $("#maskEditor"),
@@ -675,8 +854,14 @@ function uniqueAssetMentions(mentions = state.pendingAssetMentions) {
 }
 function insertAssetMention(asset) {
   const currentCount = totalReferenceCount();
-  if (SINGLE_REFERENCE_MODES.includes(state.mode) && currentCount >= 1) {
-    showToast(`${modeLabels[state.mode]}只能使用 1 张参考图（包含资产）`, "error");
+  const range_ = presetRefRange();
+  if (range_ && currentCount >= range_.max) {
+    showToast(
+      range_.max === 1
+        ? `${modeLabels[state.mode]}只能使用 1 张参考图（包含资产）`
+        : `${modeLabels[state.mode]}最多使用 ${range_.max} 张参考图（包含资产）`,
+      "error",
+    );
     return;
   }
   if (currentCount >= MAX_SOURCE_FILES) {
@@ -1719,7 +1904,7 @@ function setRatio(ratio) {
     return;
   }
   // 特殊模式只支持白名单比例；被禁用的比例不生效，回退到该模式的默认比例。
-  const allowedRatios = MODE_ALLOWED_RATIOS[state.mode];
+  const allowedRatios = modeAllowedRatios(state.mode);
   if (allowedRatios && !allowedRatios.includes(ratio)) {
     ratio = allowedRatios[0];
   }
@@ -1734,12 +1919,11 @@ function setRatio(ratio) {
 }
 function getEffectiveGenerationMode() {
   if (state.mode === "mask") return "mask";
-  if (state.mode === "characterTurnaround") return "characterTurnaround";
-  if (state.mode === "sceneMultiView") return "sceneMultiView";
+  if (isPresetMode(state.mode)) return state.mode;
   return totalReferenceCount() ? "edit" : "generate";
 }
 function getPromptPlaceholder() {
-  return SINGLE_REFERENCE_MODES.includes(state.mode)
+  return isPresetMode(state.mode)
     ? PROMPT_PLACEHOLDERS.singleReference
     : PROMPT_PLACEHOLDERS.default;
 }
@@ -1747,15 +1931,13 @@ function syncPromptPlaceholder() {
   els.prompt.dataset.placeholder = getPromptPlaceholder();
 }
 function setMode(mode) {
-  const nextMode = ["mask", ...SINGLE_REFERENCE_MODES].includes(mode)
-    ? mode
-    : "default";
+  const nextMode = mode === "mask" || isPresetMode(mode) ? mode : "default";
   if (nextMode !== "mask" && state.maskEditorOpen) closeMaskEditor();
   state.mode = nextMode;
   const originalRatio = document.querySelector('[data-ratio="original"]');
   originalRatio?.classList.toggle("hidden", nextMode !== "mask");
   // 模式切换后同步比例按钮的禁用状态；特殊模式下若当前比例不可用则回退默认比例。
-  const allowedRatios = MODE_ALLOWED_RATIOS[nextMode];
+  const allowedRatios = modeAllowedRatios(nextMode);
   document.querySelectorAll(".ratio-option").forEach((button) => {
     const disabledRatio =
       Boolean(allowedRatios) &&
@@ -1786,11 +1968,14 @@ function setMode(mode) {
   if (nextMode === "mask" && state.ratio === "original" && state.sourceFiles.length)
     syncDimensionsFromRatio();
   renderAttachments();
+  syncPresetSlotForm();
 }
 function renderFileMeta() {
   const total = totalReferenceCount();
-  if (SINGLE_REFERENCE_MODES.includes(state.mode)) {
-    els.sourceMeta.textContent = `${total} / 1 张参考图`;
+  const range = presetRefRange();
+  if (range) {
+    const limit = range.max === 1 ? "1" : `${range.min}~${range.max}`;
+    els.sourceMeta.textContent = `${total} / ${limit} 张参考图`;
     return;
   }
   els.sourceMeta.textContent = total
@@ -1946,15 +2131,18 @@ function renderAttachments() {
 }
 function setSourceFiles(files) {
   const incoming = [...files].filter((file) => file.type.startsWith("image/"));
+  const range = presetRefRange();
   const incomingCount = totalReferenceCount() + incoming.length;
-  if (
-    SINGLE_REFERENCE_MODES.includes(state.mode) &&
-    incomingCount > 1
-  ) {
-    showToast(`${modeLabels[state.mode]}只能保留 1 张参考图（包含资产），请删除多余引用`, "error");
+  if (range && incomingCount > range.max) {
+    showToast(
+      `${modeLabels[state.mode]}最多保留 ${range.max} 张参考图（包含资产），请删除多余引用`,
+      "error",
+    );
     return 0;
   }
-  const slots = Math.max(0, MAX_SOURCE_FILES - totalReferenceCount());
+  // 上限同时受预设约束与全局上限约束。
+  const capacity = Math.min(MAX_SOURCE_FILES, range ? range.max : MAX_SOURCE_FILES);
+  const slots = Math.max(0, capacity - totalReferenceCount());
   if (!slots) return 0;
   const added = incoming
     .slice(0, slots)
@@ -3066,7 +3254,7 @@ function getReferences() {
   return refs;
 }
 function editMessage(message) {
-  state.mode = ["mask", ...SINGLE_REFERENCE_MODES].includes(message.mode)
+  state.mode = message.mode === "mask" || isPresetMode(message.mode)
     ? message.mode
     : "default";
   state.ratio = message.ratio || "1:1";
@@ -3116,7 +3304,7 @@ function editMessage(message) {
   setMode(state.mode);
   setRatio(state.ratio);
   // “重新编辑 / 再次生成”回填历史参数后，同步特殊模式的禁用状态。
-  const allowedRatios = MODE_ALLOWED_RATIOS[state.mode];
+  const allowedRatios = modeAllowedRatios(state.mode);
   document.querySelectorAll(".ratio-option").forEach((button) => {
     const disabledRatio =
       Boolean(allowedRatios) &&
@@ -3145,11 +3333,25 @@ async function submitGeneration() {
   const referenceCount = totalReferenceCount();
   const rawPrompt = getPromptText(false).trim();
   const effectiveMode = getEffectiveGenerationMode();
-  // 角色三视图 / 场景多视角可仅依赖参考图与后端模板生成，提示词改为可选。
-  if (!rawPrompt && !SINGLE_REFERENCE_MODES.includes(effectiveMode))
-    return showToast("请先输入提示词", "error");
-  if (SINGLE_REFERENCE_MODES.includes(effectiveMode) && referenceCount !== 1)
-    return showToast(`${modeLabels[effectiveMode]}必须传入 1 张参考图（包含资产）`, "error");
+  const preset = presetById(effectiveMode);
+  // 预设模式可仅依赖参考图与模板生成；其它模式仍需提示词。
+  if (!rawPrompt && !preset) return showToast("请先输入提示词", "error");
+  if (preset) {
+    if (referenceCount < preset.minRefs) {
+      return showToast(
+        preset.minRefs === 1
+          ? `${preset.label}必须传入 1 张参考图（包含资产）`
+          : `${preset.label}至少需要 ${preset.minRefs} 张参考图（包含资产）`,
+        "error",
+      );
+    }
+    if (referenceCount > preset.maxRefs) {
+      return showToast(
+        `${preset.label}最多使用 ${preset.maxRefs} 张参考图（包含资产）`,
+        "error",
+      );
+    }
+  }
   if ((effectiveMode === "edit" || effectiveMode === "mask") && !state.sourceFiles.length && !state.pendingAssetMentions.length)
     return showToast("请先上传原图", "error");
   if (effectiveMode === "mask" && !state.sourceFiles.some((file) => file.maskDataUrl))
@@ -3158,8 +3360,8 @@ async function submitGeneration() {
     return showToast(MASK_EDITABLE_ERROR, "error");
   if (referenceCount > MAX_SOURCE_FILES)
     return showToast(`最多只能使用 ${MAX_SOURCE_FILES} 张参考图（包含资产）`, "error");
-  // 特殊单参考图模式的模板由后端拼接（prompts/ 目录是唯一来源），
-  // 前端只提交用户自己的描述，因此这里始终用带 @ 引用的完整提示词文本。
+  // 预设模式的模板由服务端拼接（prompts/ 是唯一来源），
+  // 前端只提交用户自己的描述 + 槽位值，因此这里始终用带 @ 引用的完整文本。
   const prompt = getPromptText(true).trim();
   const displayPrompt = rawPrompt;
   const conversation = await ensureConversation(prompt);
@@ -3180,6 +3382,8 @@ async function submitGeneration() {
     height: dimensions.height,
     size: `${dimensions.width}x${dimensions.height}`,
     inputFidelity: Boolean(els.fidelity.checked),
+    // 预设槽位值随消息保存，便于「重新编辑」时回填。
+    slots: preset ? { ...(presetSlotValues[effectiveMode] || {}) } : {},
     mentionIndexes: state.pendingMentions.map((mention) => mention.index),
     assetMentions: state.pendingAssetMentions.map((mention) => ({ ...mention })),
     references: getReferences(),
@@ -3277,6 +3481,10 @@ async function runGenerationTask(conversation, generation, settings, effectiveMo
         mode: effectiveMode,
         model: settings.model,
       }).forEach(([key, value]) => data.append(key, value));
+      // 预设模式的槽位值（JSON 字符串），服务端据此填充模板 {{slot}}。
+      if (settings.slots && Object.keys(settings.slots).length) {
+        data.append("slots", JSON.stringify(settings.slots));
+      }
       if (settings.inputFidelity) data.append("input_fidelity", "high");
       if (effectiveMode === "mask") {
         const blob = dataUrlBlob(settings.references[0]?.maskDataUrl);
@@ -3521,35 +3729,15 @@ document
   .forEach((button) =>
     button.addEventListener("click", () => setRatio(button.dataset.ratio)),
   );
-document.querySelectorAll("[data-mode]").forEach((button) =>
+// 内置模式（默认 / 蒙版）的点击绑定。预设模式的按钮在 renderModeOptions
+// 里各自绑定，并走 applyPresetSelection 处理参考图裁剪。
+document.querySelectorAll('.mode-option[data-mode="default"], .mode-option[data-mode="mask"]').forEach((button) =>
   button.addEventListener("click", () => {
-    if (
-      SINGLE_REFERENCE_MODES.includes(button.dataset.mode) &&
-      totalReferenceCount() > 1
-    ) {
-      // Single-reference presets accept either one uploaded image or one
-      // asset. Preserve the first reference in the same order used by the
-      // request, then remove every additional source/asset reference.
-      if (state.sourceFiles.length) {
-        state.sourceFiles = [state.sourceFiles[0]];
-        els.prompt.querySelectorAll(".inline-mention").forEach((mention) => {
-          if (Number(mention.dataset.index) === 0) updateInlineMention(mention, 0);
-          else mention.remove();
-        });
-        els.prompt.querySelectorAll(".asset-mention").forEach((mention) => mention.remove());
-      } else {
-        const assetMentions = [...els.prompt.querySelectorAll(".asset-mention")];
-        assetMentions.slice(1).forEach((mention) => mention.remove());
-      }
-      syncPendingMentions();
-      renderMentionTags();
-      showToast(`已为${modeLabels[button.dataset.mode]}保留第一张参考图（包含资产）`);
-    }
     setMode(button.dataset.mode);
-    if (button.closest(".mode-options"))
-      setModePopoverOpen(false);
+    if (button.closest(".mode-options")) setModePopoverOpen(false);
   }),
 );
+els.presetSlotsToggle?.addEventListener("click", togglePresetSlots);
 els.settingsButton.addEventListener("click", () => {
   setModePopoverOpen(false);
   setModelPopoverOpen(false);
@@ -4098,6 +4286,8 @@ async function init() {
   updateDimensionPreview();
   await refreshAuthSession();
   await loadModels();
+  // 预设模式必须早于 setMode 的槽位同步完成，否则首次渲染拿不到定义。
+  await loadPresets();
   checkHealth();
   refreshIcons();
   initAmbientMotion();

@@ -131,6 +131,15 @@
               class="composer-attachments hidden"
               id="composerAttachments"
             ></div>
+            <div class="preset-slots hidden" id="presetSlots">
+              <div class="preset-slots-head">
+                <span><i data-lucide="list-checks" aria-hidden="true"></i><b id="presetSlotsTitle">待补充</b></span>
+                <button type="button" class="text-button" id="presetSlotsToggle">
+                  <span id="presetSlotsToggleLabel">收起</span>
+                </button>
+              </div>
+              <div class="preset-slots-body" id="presetSlotsBody"></div>
+            </div>
             <div class="mask-editor hidden" id="maskEditor">
               <div class="mask-editor-strip">
                 <span><i data-lucide="scan-line" aria-hidden="true"></i>蒙版编辑</span>
@@ -474,7 +483,10 @@
       <p class="mode-popover-desc">
         默认模式会根据是否上传参考图，自动选择文生图或图生图；角色三视图与场景多视角均需 1 张参考图。
       </p>
-      <div class="mode-options" aria-label="模式选项">
+      <p class="mode-popover-desc">
+        默认模式会根据是否上传参考图，自动选择文生图或图生图；预设模式各自规定所需参考图数量。
+      </p>
+      <div class="mode-options" id="modeOptions" aria-label="模式选项">
         <button type="button" class="mode-option active" data-mode="default">
           <span class="mode-option-icon" aria-hidden="true">
             <i data-lucide="sparkles"></i>
@@ -497,30 +509,6 @@
           </span>
           <span class="mode-option-state" aria-hidden="true">
             <i data-lucide="check"></i>
-          </span>
-        </button>
-        <button type="button" class="mode-option" data-mode="characterTurnaround">
-          <span class="mode-option-icon" aria-hidden="true">
-            <i data-lucide="user-round-cog"></i>
-          </span>
-          <span class="mode-option-copy">
-            <span class="mode-option-title">角色三视图</span>
-            <span class="mode-option-desc">需 1 张参考图（包含资产）生成三视图</span>
-          </span>
-          <span class="mode-option-state" aria-hidden="true">
-            <i data-lucide="circle"></i>
-          </span>
-        </button>
-        <button type="button" class="mode-option" data-mode="sceneMultiView">
-          <span class="mode-option-icon" aria-hidden="true">
-            <i data-lucide="layout-grid"></i>
-          </span>
-          <span class="mode-option-copy">
-            <span class="mode-option-title">场景多视角</span>
-            <span class="mode-option-desc">需 1 张参考图（包含资产）生成 2×2 场景视角</span>
-          </span>
-          <span class="mode-option-state" aria-hidden="true">
-            <i data-lucide="circle"></i>
           </span>
         </button>
       </div>

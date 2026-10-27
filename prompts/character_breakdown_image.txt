@@ -1,0 +1,15 @@
+Instruction: Use the uploaded image as the STRICT character reference. You MUST keep the character's exact original facial features, hairstyle, hair color, eye color, clothing design, and overall art style completely identical to the reference image.
+
+Layout & Composition: Create a highly detailed character design reference sheet.
+
+In the center, place three full-body standing views (front, side, and back). CRITICAL: These three bodies MUST be headless mannequins showing ONLY the body and clothes, with absolutely no heads or neck stumps.
+
+In the upper corner, place ONE separate close-up portrait (headshot) showing the character's face clearly, maintaining the exact eye color from the reference.
+
+Details & Annotations: Surround the figures with detailed close-up insets of the clothing textures, accessories, and a dedicated color palette swatch. Overlay the layout with hand-drawn reference lines, guidelines, grids, and English annotations pointing to design details.
+
+Environment: Fill the entire canvas with no obvious empty spaces. Use a clean, pure white background with simple shadows. High resolution, crisp details.
+
+{{extra}}
+
+Do not include any of the following under any circumstance: heads on the body views, neck stumps, duplicated heads, mutated body parts, a different character, changed clothing, changed hair color, changed eye color, background elements from the reference image, empty canvas, blank areas, messy lines.

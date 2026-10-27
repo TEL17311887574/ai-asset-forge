@@ -1,0 +1,17 @@
+A highly detailed character design reference sheet.
+
+STYLE: {{style}}
+
+LAYOUT: The layout features three full-body standing views (front, side, and back) in the center. CRITICAL: The three full-body figures MUST NOT have heads; they are strictly headless mannequins displaying ONLY the clothing.
+
+PORTRAIT: In the upper corner, there are {{portrait}} separate, detailed close-up portrait(s) (headshot) of the character.
+
+FACE & HAIR: The character has {{face}}
+
+CLOTHING: The headless body views wear {{clothing}}
+
+ACCESSORIES: {{accessories}}
+
+DETAILS & ANNOTATIONS: Surrounding the central figures and the portrait: detailed close-up insets of {{details}}, and a dedicated color palette swatch. Overlay the layout with hand-drawn reference lines, guidelines, grids, and English annotations pointing to design details.
+
+ENVIRONMENT & COMPOSITION: The entire canvas must be completely filled with no obvious empty spaces. Use a clean, pure white background with simple shadows. High resolution, crisp details, 5504 x 3072 pixels, 16:9 aspect ratio.

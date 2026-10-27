@@ -16,23 +16,34 @@ import toml from "@iarna/toml";
 /** isolate 级缓存：toml 与模板各进程只读一次。 */
 let cachedConfig = null;
 
+/** 模板文件名（由 [presets.*].template 指定，这里只需知道要预加载哪些）。 */
+const TEMPLATE_FILES = [
+  "character_turnaround.txt",
+  "scene_multiview.txt",
+  "character_breakdown_image.txt",
+  "character_breakdown_text.txt",
+];
+
 /**
- * 读取共享配置与提示词模板。
- * 配置文件与模板都在仓库根/仓库内，构建时同步进 public/ 供 ASSETS 托管。
+ * 读取共享配置、预设注册表与全部提示词模板。
+ * 配置文件与模板都在仓库内，构建时同步进 public/ 供 ASSETS 托管。
  */
 async function loadConfig(env) {
   if (cachedConfig) return cachedConfig;
   // ASSETS.fetch 需要完整 URL（相对路径会抛 Invalid URL）。
   const asset = (path) => env.ASSETS.fetch(new Request(`https://assets.local${path}`));
-  const [tomlResp, turnaround, multiview] = await Promise.all([
+  const [tomlResp, ...templateResps] = await Promise.all([
     asset("/config_default.toml"),
-    asset("/prompts/character_turnaround.txt"),
-    asset("/prompts/scene_multiview.txt"),
+    ...TEMPLATE_FILES.map((file) => asset(`/prompts/${file}`)),
   ]);
-  if (!tomlResp.ok || !turnaround.ok || !multiview.ok) {
+  if (!tomlResp.ok || templateResps.some((resp) => !resp.ok)) {
     throw new HttpError(500, "配置或提示词模板缺失，请检查部署产物。");
   }
   const parsed = toml.parse(await tomlResp.text());
+  const templates = {};
+  for (let index = 0; index < TEMPLATE_FILES.length; index += 1) {
+    templates[TEMPLATE_FILES[index].replace(/\.txt$/, "")] = (await templateResps[index].text()).trim();
+  }
   cachedConfig = {
     config: {
       model: parsed.model?.default,
@@ -41,10 +52,8 @@ async function loadConfig(env) {
       maxSourceFiles: parsed.limits?.max_source_files ?? 16,
       requestTimeoutMs: (parsed.limits?.request_timeout_seconds ?? 180) * 1000,
     },
-    templates: {
-      characterTurnaround: (await turnaround.text()).trim(),
-      sceneMultiView: (await multiview.text()).trim(),
-    },
+    presets: parsed.presets || {},
+    templates,
   };
   return cachedConfig;
 }
@@ -146,6 +155,87 @@ function buildPrompt(userPrompt, template, templateName) {
   return [userPrompt.trim(), template].filter(Boolean).join("\n\n");
 }
 
+
+/** {{slot_id}} 占位符：只允许字母、数字、下划线。 */
+const SLOT_PATTERN = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
+
+/**
+ * 把模板中的 {{slot}} 替换为用户输入；未填的槽位删除整行。
+ * 与 Python 版 image/presets.py 的 render_template 保持完全一致的语义：
+ * 模板约定每个槽位独占一行，因此"删整行"不会误伤其它内容。
+ */
+function renderTemplate(template, values) {
+  const filled = {};
+  for (const [key, value] of Object.entries(values || {})) {
+    if (value != null && String(value).trim()) filled[key] = String(value).trim();
+  }
+
+  const outputLines = [];
+  for (const line of template.split("\n")) {
+    const slotIds = [...line.matchAll(SLOT_PATTERN)].map((match) => match[1]);
+    if (slotIds.length && !slotIds.every((id) => filled[id])) {
+      // 该行依赖至少一个未填槽位 → 整行删除。
+      continue;
+    }
+    outputLines.push(line.replace(SLOT_PATTERN, (_all, id) => filled[id] ?? ""));
+  }
+
+  // 压缩连续空行
+  const compressed = [];
+  for (const line of outputLines) {
+    if (!line.trim() && compressed.length && !compressed[compressed.length - 1].trim()) continue;
+    compressed.push(line);
+  }
+  return compressed.join("\n").trim();
+}
+
+/** 从预设注册表取模板并渲染。 */
+function buildPresetPrompt(presetId, userPrompt, slots, cfg) {
+  const preset = cfg.presets[presetId];
+  if (!preset) throw new HttpError(400, `未知预设: ${presetId}`);
+  const templateName = String(preset.template || "").replace(/\.txt$/, "");
+  const template = cfg.templates[templateName];
+  if (!template) throw new HttpError(500, `提示词模板缺失: ${preset.template}`);
+  const rendered = renderTemplate(template, slots);
+  return [String(userPrompt || "").trim(), rendered].filter(Boolean).join("\n\n");
+}
+
+/** 供 /api/presets 使用的预设列表（字段与 Python 版 list_presets 一致）。 */
+function listPresets(cfg) {
+  return Object.entries(cfg.presets)
+    .map(([id, raw]) => ({
+      id,
+      label: raw.label || id,
+      description: raw.description || "",
+      minRefs: raw.min_refs ?? 0,
+      maxRefs: raw.max_refs ?? 1,
+      ratios: raw.ratios || [],
+      order: raw.order ?? 100,
+      slots: (raw.slots || []).filter((slot) => slot.id).map((slot) => ({
+        id: String(slot.id),
+        label: String(slot.label || ""),
+        hint: String(slot.hint || ""),
+      })),
+    }))
+    .sort((a, b) => a.order - b.order || String(a.label).localeCompare(String(b.label)));
+}
+
+/** 解析前端传来的 slots JSON。 */
+function parseSlots(raw) {
+  if (!raw) return {};
+  try {
+    const value = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    const out = {};
+    for (const [key, val] of Object.entries(value)) {
+      if (val != null) out[String(key)] = String(val);
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 // ---------------------------------------------------------------- 上游转发
 
 async function callUpstream(cfg, apiKey, baseURL, path, body, isMultipart) {
@@ -223,10 +313,8 @@ async function handleEdit(request, cfg) {
   const prompt = form.get("prompt");
   const mode = form.get("mode") || "edit";
   let finalPrompt;
-  if (mode === "characterTurnaround") {
-    finalPrompt = buildPrompt(safeOptionalPrompt(prompt), cfg.templates.characterTurnaround, "characterTurnaround");
-  } else if (mode === "sceneMultiView") {
-    finalPrompt = buildPrompt(safeOptionalPrompt(prompt), cfg.templates.sceneMultiView, "sceneMultiView");
+  if (cfg.presets && cfg.presets[mode]) {
+    finalPrompt = buildPresetPrompt(mode, safeOptionalPrompt(prompt), parseSlots(form.get("slots")), cfg);
   } else {
     finalPrompt = cleanPrompt(prompt, cfg.config);
   }
@@ -286,6 +374,10 @@ export default {
       if (path === "/api/models" && method === "GET") {
         const cfg = await loadConfig(env);
         return json({ default: cfg.config.model, available: cfg.config.availableModels });
+      }
+      if (path === "/api/presets" && method === "GET") {
+        const cfg = await loadConfig(env);
+        return json({ items: listPresets(cfg) });
       }
 
       return json({ error: "接口不存在。" }, 404);

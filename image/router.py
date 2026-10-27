@@ -10,9 +10,8 @@ from fastapi import APIRouter, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 from loguru import logger
 
+from image.presets import build_preset_prompt, get_preset_ids
 from image.service import (
-    build_character_turnaround_prompt,
-    build_scene_multi_view_prompt,
     clean_prompt,
     edit_image,
     generate_image,
@@ -26,6 +25,21 @@ from image.service import (
 )
 
 router = APIRouter()
+
+
+def _parse_slots(raw: Optional[str]) -> dict:
+    """把前端传来的 slots JSON 字符串解析成 dict；非法/为空时返回空字典。"""
+    if not raw:
+        return {}
+    import json
+
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    return {str(key): str(val) for key, val in value.items() if val is not None}
 
 
 def extract_credentials(request: Request) -> tuple:
@@ -90,6 +104,7 @@ async def edit(
     mode: Annotated[str, Form()] = "edit",
     model: Annotated[Optional[str], Form()] = None,
     input_fidelity: Annotated[str, Form()] = "low",
+    slots: Annotated[Optional[str], Form()] = None,
     mask: Annotated[Optional[UploadFile], Form()] = None,
 ):
     """图生图接口：基于原图和提示词进行编辑、蒙版或单参考图预设模式生成。"""
@@ -97,13 +112,11 @@ async def edit(
         api_key, base_url = extract_credentials(request)
         image_data = await read_image_files(images)
 
-        if mode == "characterTurnaround":
-            final_prompt = build_character_turnaround_prompt(
-                safe_optional_prompt(prompt)
-            )
-        elif mode == "sceneMultiView":
-            final_prompt = build_scene_multi_view_prompt(
-                safe_optional_prompt(prompt)
+        if mode in get_preset_ids():
+            final_prompt = build_preset_prompt(
+                mode,
+                safe_optional_prompt(prompt),
+                _parse_slots(slots),
             )
         else:
             final_prompt = clean_prompt(prompt)

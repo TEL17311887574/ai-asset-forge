@@ -1486,6 +1486,72 @@ button {
   padding: 0 0 9px;
   padding-top: 7px;
 }
+
+/* 预设槽位表单：选中有 slots 的预设时出现在输入框上方 */
+.preset-slots {
+  border-bottom: 1px solid #333731;
+  margin-bottom: 8px;
+  padding: 6px 0 9px;
+}
+.preset-slots.hidden {
+  display: none;
+}
+.preset-slots-head {
+  align-items: center;
+  color: var(--faint);
+  display: flex;
+  font-size: 10px;
+  justify-content: space-between;
+  letter-spacing: 0.08em;
+  margin-bottom: 7px;
+  text-transform: uppercase;
+}
+.preset-slots-head span {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+.preset-slots-head b {
+  color: var(--text);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.preset-slots-body {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+.preset-slots-body.collapsed {
+  display: none;
+}
+.preset-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.preset-slot-label {
+  color: var(--faint);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+.preset-slot-input {
+  background: #1b1e1b;
+  border: 1px solid #353a35;
+  border-radius: 8px;
+  color: #eef1ec;
+  font-size: 12px;
+  padding: 7px 9px;
+  width: 100%;
+}
+.preset-slot-input:focus {
+  border-color: #5d6b5b;
+  outline: none;
+}
+.preset-slot-input::placeholder {
+  color: #6d766c;
+}
 .attachment-thumb {
   border: 1px solid #475044;
   border-radius: 6px;

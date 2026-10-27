@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Request
 
 from config_default import AVAILABLE_MODELS, MODEL
+from image.presets import list_presets
 from image.router import router as image_router
 
 
@@ -25,3 +26,9 @@ async def health():
 async def models():
     """返回可用的模型列表，供前端模型切换器使用。"""
     return {"default": MODEL, "available": AVAILABLE_MODELS}
+
+
+@router.get("/api/presets", tags=["服务状态"])
+async def presets():
+    """返回预设模式列表（label / 参考图范围 / 槽位定义），前端据此动态渲染。"""
+    return {"items": list_presets()}
